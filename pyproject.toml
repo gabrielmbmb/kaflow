@@ -23,7 +23,10 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dependencies = []
+dependencies = [
+  "pydantic >=1.10.0,<2.0.0",
+  "aiokafka >=0.8.0"
+]
 dynamic = ["version"]
 
 [project.optional-dependencies]
@@ -52,6 +55,10 @@ ignore = ["E501", "B905", "B008"]
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module =["aiokafka.*"]
+ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["kaflow"]
