@@ -25,7 +25,8 @@ classifiers = [
 ]
 dependencies = [
   "pydantic >=1.10.0,<2.0.0",
-  "aiokafka >=0.8.0"
+  "aiokafka >=0.8.0",
+  "di[anyio] ==0.75.2"
 ]
 dynamic = ["version"]
 
