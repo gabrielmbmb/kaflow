@@ -13,13 +13,13 @@ from typing import (
 )
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
-from di import Container
+from di import Container, ScopeState
 from di.dependent import Dependent
 from di.executors import AsyncExecutor
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from aiokafka import ConsumerRecord
-    from pydantic import BaseModel
 
     from kaflow.serialize import Serializer
     from kaflow.typing import ConsumerFunc
@@ -57,21 +57,40 @@ class TopicProcessingFunc:
     def __init__(
         self,
         func: ConsumerFunc,
+        container: Container,
         return_model_type: type[BaseModel] | None,
         serializer_type: type[Serializer] | None,
         sink_topics: list[str] | None = None,
     ) -> None:
         self.func = func
+        self.container = container
         self.return_model_type = return_model_type
         self.serializer_type = serializer_type
         self.sink_topics = sink_topics
+
+        self.executor = AsyncExecutor()
+        self.solved = None
+
+    def prepare(self, state: ScopeState) -> None:
+        self.solved = self.container.solve(
+            Dependent(self.func, scope="app"),
+            scopes=["app"],
+        )
+        self.container_state = state
 
     async def consume(
         self,
         model: BaseModel,
         callback_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
     ) -> None:
-        return_model = await self.func(model)
+        async with self.container.enter_scope(
+            "consumer", state=self.container_state
+        ) as consumer_state:
+            return_model = await self.solved.execute_async(
+                executor=self.executor,
+                state=consumer_state,
+                values={BaseModel: model},
+            )
         if (
             return_model
             and self.return_model_type
@@ -93,17 +112,25 @@ class TopicProcessor:
         name: str,
         model_type: type[BaseModel],
         deserializer_type: type[Serializer],
+        container: Container,
     ) -> None:
         self.name = name
         self.model_type = model_type
         self.deserializer_type = deserializer_type
+        self.container = container
         self.funcs: list[TopicProcessingFunc] = []
+
+        self.solved = []
 
     def __repr__(self) -> str:
         return (
             f"TopicProcessor(name={self.name}, model={self.model_type},"
             f" deserializer={self.deserializer_type})"
         )
+
+    def prepare(self, state: ScopeState) -> None:
+        for func in self.funcs:
+            func.prepare(state)
 
     def add_func(
         self,
@@ -115,6 +142,7 @@ class TopicProcessor:
         self.funcs.append(
             TopicProcessingFunc(
                 func=func,
+                container=self.container,
                 return_model_type=return_model_type,
                 serializer_type=serializer_type,
                 sink_topics=sink_topics,
@@ -143,41 +171,52 @@ class Kaflow:
     ) -> None:
         self.container = Container()
         self.name = name
-        self.brokers = brokers
         self.loop = asyncio.get_event_loop()
+        self._container_state = ScopeState()
 
         @asynccontextmanager
         async def lifespan_ctx() -> AsyncIterator[None]:
             executor = AsyncExecutor()
             dep: Dependent[Any]
-            if lifespan:
-                dep = Dependent(
-                    _wrap_lifespan_as_async_generator(lifespan), scope="app"
-                )
-            else:
-                dep = Dependent(lambda: None, scope="app")
-            solved = self.container.solve(dep, scopes=["app"])
-            async with self.container.enter_scope(scope="app") as state:
-                await solved.execute_async(executor=executor, state=state)
-                yield
+
+            async with self._container_state.enter_scope(
+                scope="app"
+            ) as self._container_state:
+                if lifespan:
+                    dep = Dependent(
+                        _wrap_lifespan_as_async_generator(lifespan), scope="app"
+                    )
+                else:
+                    dep = Dependent(lambda: None, scope="app")
+                solved = self.container.solve(dep, scopes=["app"])
+                try:
+                    await solved.execute_async(
+                        executor=executor, state=self._container_state
+                    )
+                    self._prepare()
+                    yield
+                finally:
+                    self._container_state = ScopeState()
 
         self.lifespan = lifespan_ctx
 
-        self.auto_commit = auto_commit
-        self.auto_commit_interval_ms = auto_commit_interval_ms
         self.consumer = AIOKafkaConsumer(
-            bootstrap_servers=self.brokers,
-            enable_auto_commit=self.auto_commit,
-            auto_commit_interval_ms=self.auto_commit_interval_ms,
+            bootstrap_servers=brokers,
+            enable_auto_commit=auto_commit,
+            auto_commit_interval_ms=auto_commit_interval_ms,
             loop=self.loop,
         )
 
         self.producer = AIOKafkaProducer(
-            bootstrap_servers=self.brokers,
+            bootstrap_servers=brokers,
             loop=self.loop,
         )
 
         self.topics_processors: dict[str, TopicProcessor] = {}
+
+    def _prepare(self) -> None:
+        for topic_processor in self.topics_processors.values():
+            topic_processor.prepare(self._container_state)
 
     def _add_topic_processor(
         self,
@@ -195,13 +234,17 @@ class Kaflow:
                 topic_processor.model_type != model_type
                 or topic_processor.deserializer_type != deserializer_type
             ):
+                self.loop.run_until_complete(self._stop())
                 raise TypeError(
                     f"Topic '{topic}' is already registered with a different model"
                     f" and/or deserializer. TopicProcessor: {topic_processor}."
                 )
         else:
             topic_processor = TopicProcessor(
-                name=topic, model_type=model_type, deserializer_type=deserializer_type
+                name=topic,
+                model_type=model_type,
+                deserializer_type=deserializer_type,
+                container=self.container,
             )
         topic_processor.add_func(
             func=func,
@@ -222,6 +265,7 @@ class Kaflow:
                     f" have decorated using `@{self.__class__.__name__}.consume` method"
                     " is a regular function."
                 )
+            # TODO: check there is at least one argument Json or Avro
             # if func.__code__.co_argcount != 1:
             #     raise ValueError(
             #         "Consumer functions must have only one argument. You're probably"
