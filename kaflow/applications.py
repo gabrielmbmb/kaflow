@@ -47,12 +47,12 @@ class TopicProcessingFunc:
         func: ConsumerFunc,
         return_model_type: type[BaseModel] | None,
         serializer_type: type[Serializer] | None,
-        sink_topic: str | None = None,
+        sink_topics: list[str] | None = None,
     ) -> None:
         self.func = func
         self.return_model_type = return_model_type
         self.serializer_type = serializer_type
-        self.sink_topic = sink_topic
+        self.sink_topics = sink_topics
 
     async def consume(
         self, model: BaseModel, callback_fn: Callable[[str, bytes], Awaitable[None]]
@@ -67,10 +67,10 @@ class TopicProcessingFunc:
                 f"Return type of {self.func.__name__} is not {self.return_model_type}"
             )
 
-        if self.sink_topic and self.serializer_type and return_model:
-            await callback_fn(
-                self.sink_topic, self.serializer_type.serialize(return_model)
-            )
+        if self.sink_topics and self.serializer_type and return_model:
+            message = self.serializer_type.serialize(return_model)
+            for topic in self.sink_topics:
+                asyncio.create_task(callback_fn(topic, message))
 
 
 class TopicProcessor:
@@ -96,14 +96,14 @@ class TopicProcessor:
         func: ConsumerFunc,
         return_model_type: type[BaseModel] | None,
         serializer_type: type[Serializer] | None,
-        sink_topic: str | None = None,
+        sink_topics: list[str] | None = None,
     ) -> None:
         self.funcs.append(
             TopicProcessingFunc(
                 func=func,
                 return_model_type=return_model_type,
                 serializer_type=serializer_type,
-                sink_topic=sink_topic,
+                sink_topics=sink_topics,
             )
         )
 
@@ -114,7 +114,8 @@ class TopicProcessor:
     ) -> None:
         raw = self.deserializer_type.deserialize(record.value)
         model = self.model_type(**raw)
-        await asyncio.gather(*[func.consume(model, callback_fn) for func in self.funcs])
+        for func in self.funcs:
+            asyncio.create_task(func.consume(model, callback_fn))
 
 
 class Kaflow:
@@ -153,7 +154,7 @@ class Kaflow:
         deserializer_type: type[Serializer],
         return_model_type: type[BaseModel] | None,
         serializer_type: type[Serializer] | None,
-        sink_topic: str | None = None,
+        sink_topics: list[str] | None = None,
     ) -> None:
         topic_processor = self.topics_processors.get(topic)
         if topic_processor:
@@ -173,12 +174,12 @@ class Kaflow:
             func=func,
             return_model_type=return_model_type,
             serializer_type=serializer_type,
-            sink_topic=sink_topic,
+            sink_topics=sink_topics,
         )
         self.topics_processors[topic] = topic_processor
 
     def consume(
-        self, topic: str, sink_topic: str | None = None
+        self, topic: str, sink_topics: list[str] | None = None
     ) -> Callable[[ConsumerFunc], ConsumerFunc]:
         def register_consumer(func: ConsumerFunc) -> ConsumerFunc:
             if not asyncio.iscoroutinefunction(func):
@@ -208,7 +209,7 @@ class Kaflow:
                 deserializer_type=deserializer_type,
                 return_model_type=return_model_type,
                 serializer_type=serializer_type,
-                sink_topic=sink_topic,
+                sink_topics=sink_topics,
             )
             return func
 
