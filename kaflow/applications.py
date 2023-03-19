@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Awaitable, Callable
+import inspect
+from contextlib import asynccontextmanager
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncContextManager,
+    AsyncIterator,
+    Callable,
+    Coroutine,
+)
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from di import Container
+from di.dependent import Dependent
+from di.executors import AsyncExecutor
 
 if TYPE_CHECKING:
     from aiokafka import ConsumerRecord
@@ -55,7 +67,9 @@ class TopicProcessingFunc:
         self.sink_topics = sink_topics
 
     async def consume(
-        self, model: BaseModel, callback_fn: Callable[[str, bytes], Awaitable[None]]
+        self,
+        model: BaseModel,
+        callback_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
     ) -> None:
         return_model = await self.func(model)
         if (
@@ -110,7 +124,7 @@ class TopicProcessor:
     async def distribute(
         self,
         record: ConsumerRecord,
-        callback_fn: Callable[[str, bytes], Awaitable[None]],
+        callback_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
     ) -> None:
         raw = self.deserializer_type.deserialize(record.value)
         model = self.model_type(**raw)
@@ -125,10 +139,29 @@ class Kaflow:
         brokers: str | list[str],
         auto_commit: bool = True,
         auto_commit_interval_ms: int = 5000,
+        lifespan: Callable[..., AsyncContextManager[None]] | None = None,
     ) -> None:
+        self.container = Container()
         self.name = name
         self.brokers = brokers
         self.loop = asyncio.get_event_loop()
+
+        @asynccontextmanager
+        async def lifespan_ctx() -> AsyncIterator[None]:
+            executor = AsyncExecutor()
+            dep: Dependent[Any]
+            if lifespan:
+                dep = Dependent(
+                    _wrap_lifespan_as_async_generator(lifespan), scope="app"
+                )
+            else:
+                dep = Dependent(lambda: None, scope="app")
+            solved = self.container.solve(dep, scopes=["app"])
+            async with self.container.enter_scope(scope="app") as state:
+                await solved.execute_async(executor=executor, state=state)
+                yield
+
+        self.lifespan = lifespan_ctx
 
         self.auto_commit = auto_commit
         self.auto_commit_interval_ms = auto_commit_interval_ms
@@ -189,13 +222,13 @@ class Kaflow:
                     f" have decorated using `@{self.__class__.__name__}.consume` method"
                     " is a regular function."
                 )
-            if func.__code__.co_argcount != 1:
-                raise ValueError(
-                    "Consumer functions must have only one argument. You're probably"
-                    " seeing this error because one of the function that you have"
-                    f" decorated using `@{self.__class__.__name__}.subscribe` method"
-                    " takes more or less than one argument."
-                )
+            # if func.__code__.co_argcount != 1:
+            #     raise ValueError(
+            #         "Consumer functions must have only one argument. You're probably"
+            #         " seeing this error because one of the function that you have"
+            #         f" decorated using `@{self.__class__.__name__}.consume` method"
+            #         " takes more or less than one argument."
+            #     )
             (
                 model_type,
                 deserializer_type,
@@ -224,10 +257,15 @@ class Kaflow:
             await self.topics_processors[topic].distribute(record, self._publish)
 
     async def _start(self) -> None:
+        async def __start() -> None:
+            await self.consumer.start()
+            await self.producer.start()
+            await self._consuming_loop()
+
         self.consumer.subscribe(self.topics)
-        await self.consumer.start()
-        await self.producer.start()
-        await self._consuming_loop()
+
+        async with self.lifespan():
+            await __start()
 
     async def _stop(self) -> None:
         await self.consumer.stop()
@@ -247,3 +285,24 @@ class Kaflow:
     @property
     def topics(self) -> list[str]:
         return list(self.topics_processors.keys())
+
+
+# Taken from adriandg/xpresso
+# https://github.com/adriangb/xpresso/blob/0a69b5131440cd114baeab7243db7bd3255e66ed/xpresso/applications.py#L392
+# Thanks :)
+def _wrap_lifespan_as_async_generator(
+    lifespan: Callable[..., AsyncContextManager[None]]
+) -> Callable[..., AsyncIterator[None]]:
+    # wrap true context managers in an async generator
+    # so that the dependency injection system recognizes it
+    async def gen(*args: Any, **kwargs: Any) -> AsyncIterator[None]:
+        async with lifespan(*args, **kwargs):
+            yield
+
+    # this is so that the dependency injection system
+    # still picks up parameters from the function signature
+    sig = inspect.signature(gen)
+    sig = sig.replace(parameters=list(inspect.signature(lifespan).parameters.values()))
+    setattr(gen, "__signature__", sig)  # noqa: B010
+
+    return gen
