@@ -10,6 +10,7 @@ from typing import (
     AsyncIterator,
     Callable,
     Coroutine,
+    NamedTuple,
 )
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
@@ -20,8 +21,9 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from aiokafka import ConsumerRecord
+    from di import SolvedDependent
 
-    from kaflow.serialize import Serializer
+    from kaflow.serializers import Serializer
     from kaflow.typing import ConsumerFunc
 
 
@@ -53,40 +55,28 @@ def _get_consume_func_info(
     return model, deserializer, return_model, serializer
 
 
-class TopicProcessingFunc:
-    def __init__(
-        self,
-        func: ConsumerFunc,
-        container: Container,
-        return_model_type: type[BaseModel] | None,
-        serializer_type: type[Serializer] | None,
-        sink_topics: list[str] | None = None,
-    ) -> None:
-        self.func = func
-        self.container = container
-        self.return_model_type = return_model_type
-        self.serializer_type = serializer_type
-        self.sink_topics = sink_topics
+Scopes = ("app", "consumer")
 
-        self.executor = AsyncExecutor()
-        self.solved = None
 
-    def prepare(self, state: ScopeState) -> None:
-        self.solved = self.container.solve(
-            Dependent(self.func, scope="app"),
-            scopes=["app"],
-        )
-        self.container_state = state
+class TopicProcessingFunc(NamedTuple):
+    dependent: SolvedDependent[Any]
+    container: Container
+    container_state: ScopeState | None = None
+    return_model_type: type[BaseModel] | None = None
+    serializer_type: type[Serializer] | None = None
+    sink_topics: list[str] | None = None
+    executor: AsyncExecutor = AsyncExecutor()
 
-    async def consume(
+    async def __call__(
         self,
         model: BaseModel,
+        state: ScopeState,
         callback_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
     ) -> None:
         async with self.container.enter_scope(
-            "consumer", state=self.container_state
+            "consumer", state=state
         ) as consumer_state:
-            return_model = await self.solved.execute_async(
+            return_model = await self.dependent.execute_async(
                 executor=self.executor,
                 state=consumer_state,
                 values={BaseModel: model},
@@ -96,8 +86,10 @@ class TopicProcessingFunc:
             and self.return_model_type
             and not isinstance(return_model, self.return_model_type)
         ):
+            func_name = self.dependent.dependency.call.__name__  # type: ignore
             raise TypeError(
-                f"Return type of {self.func.__name__} is not {self.return_model_type}"
+                f"Return type of `{func_name}` function is not of"
+                f" `{self.return_model_type.__name__}` type"
             )
 
         if self.sink_topics and self.serializer_type and return_model:
@@ -107,6 +99,15 @@ class TopicProcessingFunc:
 
 
 class TopicProcessor:
+    __slots__ = (
+        "name",
+        "model_type",
+        "deserializer_type",
+        "container",
+        "container_state",
+        "funcs",
+    )
+
     def __init__(
         self,
         name: str,
@@ -120,8 +121,6 @@ class TopicProcessor:
         self.container = container
         self.funcs: list[TopicProcessingFunc] = []
 
-        self.solved = []
-
     def __repr__(self) -> str:
         return (
             f"TopicProcessor(name={self.name}, model={self.model_type},"
@@ -129,8 +128,7 @@ class TopicProcessor:
         )
 
     def prepare(self, state: ScopeState) -> None:
-        for func in self.funcs:
-            func.prepare(state)
+        self.container_state = state
 
     def add_func(
         self,
@@ -141,7 +139,9 @@ class TopicProcessor:
     ) -> None:
         self.funcs.append(
             TopicProcessingFunc(
-                func=func,
+                dependent=self.container.solve(
+                    Dependent(func, scope="consumer"), scopes=Scopes
+                ),
                 container=self.container,
                 return_model_type=return_model_type,
                 serializer_type=serializer_type,
@@ -157,7 +157,7 @@ class TopicProcessor:
         raw = self.deserializer_type.deserialize(record.value)
         model = self.model_type(**raw)
         for func in self.funcs:
-            asyncio.create_task(func.consume(model, callback_fn))
+            asyncio.create_task(func(model, self.container_state, callback_fn))
 
 
 class Kaflow:
@@ -169,10 +169,19 @@ class Kaflow:
         auto_commit_interval_ms: int = 5000,
         lifespan: Callable[..., AsyncContextManager[None]] | None = None,
     ) -> None:
-        self.container = Container()
         self.name = name
-        self.loop = asyncio.get_event_loop()
+        self.brokers = brokers
+        self.auto_commit = auto_commit
+        self.auto_commit_interval_ms = auto_commit_interval_ms
+
+        self.container = Container()
         self._container_state = ScopeState()
+
+        self.loop = asyncio.get_event_loop()
+        self.consumer: AIOKafkaConsumer | None = None
+        self.producer: AIOKafkaProducer | None = None
+
+        self.topics_processors: dict[str, TopicProcessor] = {}
 
         @asynccontextmanager
         async def lifespan_ctx() -> AsyncIterator[None]:
@@ -188,7 +197,7 @@ class Kaflow:
                     )
                 else:
                     dep = Dependent(lambda: None, scope="app")
-                solved = self.container.solve(dep, scopes=["app"])
+                solved = self.container.solve(dep, scopes=Scopes)
                 try:
                     await solved.execute_async(
                         executor=executor, state=self._container_state
@@ -199,20 +208,6 @@ class Kaflow:
                     self._container_state = ScopeState()
 
         self.lifespan = lifespan_ctx
-
-        self.consumer = AIOKafkaConsumer(
-            bootstrap_servers=brokers,
-            enable_auto_commit=auto_commit,
-            auto_commit_interval_ms=auto_commit_interval_ms,
-            loop=self.loop,
-        )
-
-        self.producer = AIOKafkaProducer(
-            bootstrap_servers=brokers,
-            loop=self.loop,
-        )
-
-        self.topics_processors: dict[str, TopicProcessor] = {}
 
     def _prepare(self) -> None:
         for topic_processor in self.topics_processors.values():
@@ -254,6 +249,21 @@ class Kaflow:
         )
         self.topics_processors[topic] = topic_processor
 
+    def _create_consumer(self) -> AIOKafkaConsumer:
+        return AIOKafkaConsumer(
+            *self.topics_processors.keys(),
+            loop=self.loop,
+            bootstrap_servers=self.brokers,
+            enable_auto_commit=self.auto_commit,
+            auto_commit_interval_ms=self.auto_commit_interval_ms,
+        )
+
+    def _create_producer(self) -> AIOKafkaProducer:
+        return AIOKafkaProducer(
+            loop=self.loop,
+            bootstrap_servers=self.brokers,
+        )
+
     def consume(
         self, topic: str, sink_topics: list[str] | None = None
     ) -> Callable[[ConsumerFunc], ConsumerFunc]:
@@ -293,27 +303,39 @@ class Kaflow:
         return register_consumer
 
     async def _publish(self, topic: str, value: bytes) -> None:
+        if not self.producer:
+            raise RuntimeError(
+                "The producer has not been started yet. You're probably seeing this"
+                f" error because `{self.__class__.__name__}.run` method has not been"
+                " called yet."
+            )
         await self.producer.send_and_wait(topic=topic, value=value)
 
     async def _consuming_loop(self) -> None:
+        if not self.consumer:
+            raise RuntimeError(
+                "The consumer has not been started yet. You're probably seeing this"
+                f" error because `{self.__class__.__name__}.run` method has not been"
+                " called yet."
+            )
         async for record in self.consumer:
             topic = record.topic
             await self.topics_processors[topic].distribute(record, self._publish)
 
     async def _start(self) -> None:
-        async def __start() -> None:
+        self.consumer = self._create_consumer()
+        self.producer = self._create_producer()
+
+        async with self.lifespan():
             await self.consumer.start()
             await self.producer.start()
             await self._consuming_loop()
 
-        self.consumer.subscribe(self.topics)
-
-        async with self.lifespan():
-            await __start()
-
     async def _stop(self) -> None:
-        await self.consumer.stop()
-        await self.producer.stop()
+        if self.consumer:
+            await self.consumer.stop()
+        if self.producer:
+            await self.producer.stop()
 
     def run(self) -> None:
         try:
