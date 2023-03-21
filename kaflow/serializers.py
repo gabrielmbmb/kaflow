@@ -43,6 +43,8 @@ class FastAvroSerializer(Serializer):
     pass
 
 
+MessageSerializerFlag = "MessageSerializer"
+
 _BaseModelT = TypeVar("_BaseModelT", bound=BaseModel)
-Json = Annotated[_BaseModelT, JsonSerializer]
-Avro = Annotated[_BaseModelT, AvroSerializer]
+Json = Annotated[_BaseModelT, JsonSerializer, MessageSerializerFlag]
+Avro = Annotated[_BaseModelT, AvroSerializer, MessageSerializerFlag]

@@ -78,8 +78,8 @@ class TopicProcessingFunc:
 class TopicProcessor:
     __slots__ = (
         "name",
-        "model_type",
-        "deserializer_type",
+        "param_type",
+        "deserializer",
         "container",
         "container_state",
         "funcs",
@@ -88,20 +88,20 @@ class TopicProcessor:
     def __init__(
         self,
         name: str,
-        model_type: type[BaseModel],
-        deserializer_type: type[Serializer],
+        param_type: type[BaseModel],
+        deserializer: type[Serializer],
         container: Container,
     ) -> None:
         self.name = name
-        self.model_type = model_type
-        self.deserializer_type = deserializer_type
+        self.param_type = param_type
+        self.deserializer = deserializer
         self.container = container
         self.funcs: list[Callable[..., Coroutine[Any, Any, None]]] = []
 
     def __repr__(self) -> str:
         return (
-            f"TopicProcessor(name={self.name}, model={self.model_type},"
-            f" deserializer={self.deserializer_type})"
+            f"TopicProcessor(name={self.name}, model={self.param_type},"
+            f" deserializer={self.deserializer})"
         )
 
     def prepare(self, state: ScopeState) -> None:
@@ -110,8 +110,8 @@ class TopicProcessor:
     def add_func(
         self,
         func: ConsumerFunc,
-        return_model_type: type[BaseModel] | None,
-        serializer_type: type[Serializer] | None,
+        return_type: type[BaseModel] | None,
+        serializer: type[Serializer] | None,
         sink_topics: Sequence[str] | None = None,
     ) -> None:
         self.funcs.append(
@@ -120,8 +120,8 @@ class TopicProcessor:
                     Dependent(func, scope="consumer"), scopes=Scopes
                 ),
                 container=self.container,
-                return_model_type=return_model_type,
-                serializer_type=serializer_type,
+                return_model_type=return_type,
+                serializer_type=serializer,
                 sink_topics=sink_topics,
             )
         )
@@ -131,8 +131,8 @@ class TopicProcessor:
         record: ConsumerRecord,
         callback_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
     ) -> None:
-        raw = self.deserializer_type.deserialize(record.value)
-        model = self.model_type(**raw)
+        raw = self.deserializer.deserialize(record.value)
+        model = self.param_type(**raw)
         try:
             await task_group(self.funcs, model, self.container_state, callback_fn)
         except Exception as e:

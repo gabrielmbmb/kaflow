@@ -19,6 +19,12 @@ from di.executors import AsyncExecutor
 from pydantic import BaseModel
 
 from kaflow._utils.di import Scopes
+from kaflow._utils.inspect import (
+    annotated_param_with,
+    has_return_annotation,
+    signature_contains_annotated_param_with,
+)
+from kaflow.serializers import MessageSerializerFlag
 from kaflow.topic import TopicProcessor
 
 if TYPE_CHECKING:
@@ -26,32 +32,19 @@ if TYPE_CHECKING:
     from kaflow.typing import ConsumerFunc
 
 
-def _get_consume_func_info(
-    func: ConsumerFunc,
-) -> tuple[
-    type[BaseModel], type[Serializer], type[BaseModel] | None, type[Serializer] | None
-]:
-    """Get the model and deserializer from the consume function.
+def annotated_serializer_info(param: Any) -> tuple[type[BaseModel], type[Serializer]]:
+    """Get the type and serializer of a parameter annotated (`Annotated[...]`) with
+    a Kaflow serializer.
 
     Args:
-        func: The function consuming messages from a Kafka topic. It must have
-            only one argument, which is the message to be consumed.
+        param: the annotated parameter to get the type and serializer from.
 
     Returns:
-        A tuple containing the model and deserializer of the message to be consumed. If
-        the function has a return type, it will also return the model and serializer of
-        the return type.
+        A tuple with the type and serializer of the annotated parameter.
     """
-    annotated = list(func.__annotations__.values())[0]
-    model = annotated.__args__[0]
-    deserializer = annotated.__metadata__[0]
-    return_annotation = func.__annotations__.get("return")
-    return_model = None
-    serializer = None
-    if return_annotation:
-        return_model = return_annotation.__args__[0]
-        serializer = return_annotation.__metadata__[0]
-    return model, deserializer, return_model, serializer
+    param_type = param.__args__[0]
+    deserializer = param.__metadata__[0]
+    return param_type, deserializer
 
 
 class Kaflow:
@@ -111,17 +104,17 @@ class Kaflow:
         self,
         topic: str,
         func: ConsumerFunc,
-        model_type: type[BaseModel],
-        deserializer_type: type[Serializer],
-        return_model_type: type[BaseModel] | None,
-        serializer_type: type[Serializer] | None,
+        param_type: type[BaseModel],
+        deserializer: type[Serializer],
+        return_type: type[BaseModel] | None,
+        serializer: type[Serializer] | None,
         sink_topics: Sequence[str] | None = None,
     ) -> None:
         topic_processor = self._topics_processors.get(topic)
         if topic_processor:
             if (
-                topic_processor.model_type != model_type
-                or topic_processor.deserializer_type != deserializer_type
+                topic_processor.param_type != param_type
+                or topic_processor.deserializer != deserializer
             ):
                 self._loop.run_until_complete(self._stop())
                 raise TypeError(
@@ -131,14 +124,14 @@ class Kaflow:
         else:
             topic_processor = TopicProcessor(
                 name=topic,
-                model_type=model_type,
-                deserializer_type=deserializer_type,
+                param_type=param_type,
+                deserializer=deserializer,
                 container=self._container,
             )
         topic_processor.add_func(
             func=func,
-            return_model_type=return_model_type,
-            serializer_type=serializer_type,
+            return_type=return_type,
+            serializer=serializer,
             sink_topics=sink_topics,
         )
         self._topics_processors[topic] = topic_processor
@@ -164,32 +157,50 @@ class Kaflow:
         def register_consumer(func: ConsumerFunc) -> ConsumerFunc:
             if not asyncio.iscoroutinefunction(func):
                 raise ValueError(
-                    "Consumer functions must be coroutines (`async def ...`). You're"
-                    " probably seeing this error because one of the function that you"
-                    f" have decorated using `@{self.__class__.__name__}.consume` method"
-                    " is a regular function."
+                    f"'{func.__name__}' is not a coroutine. Consumer functions must be"
+                    f" coroutines (`async def {func.__name__}`)."
                 )
-            # TODO: check there is at least one argument Json or Avro
-            # if func.__code__.co_argcount != 1:
-            #     raise ValueError(
-            #         "Consumer functions must have only one argument. You're probably"
-            #         " seeing this error because one of the function that you have"
-            #         f" decorated using `@{self.__class__.__name__}.consume` method"
-            #         " takes more or less than one argument."
-            #     )
-            (
-                model_type,
-                deserializer_type,
-                return_model_type,
-                serializer_type,
-            ) = _get_consume_func_info(func)
+            signature = inspect.signature(func)
+            message_serializer_param = signature_contains_annotated_param_with(
+                MessageSerializerFlag, signature
+            )
+            if not message_serializer_param:
+                raise ValueError(
+                    f"'{func.__name__}' does not have a message parameter annotated"
+                    " with a serializer like `kaflow.serializers.Json`: `async def"
+                    f" {func.__name__}(message: Json[BaseModel]) -> None: ...`"
+                    " Consumers functions must have a parameter annotated with a"
+                    " serializer like `kaflow.serializers.Json` to receive the"
+                    " messages from the topic."
+                )
+            return_type: Any | None = None
+            serializer: Serializer | None = None
+            if has_return_annotation(signature):
+                if not annotated_param_with(
+                    MessageSerializerFlag, signature.return_annotation
+                ):
+                    raise ValueError(
+                        f"`{signature.return_annotation}` cannot be used as a return"
+                        f" type for '{func.__name__}' consumer function. Consumers"
+                        " functions must return a message annotated with a serializer"
+                        " like `kaflow.serializers.Json`: `async def"
+                        " process_topic(message: Json[BaseModel]) -> Json[BaseModel]:"
+                        " ...`"
+                    )
+                else:
+                    return_type, serializer = annotated_serializer_info(
+                        signature.return_annotation
+                    )
+            param_type, deserializer = annotated_serializer_info(
+                message_serializer_param.annotation
+            )
             self._add_topic_processor(
                 topic=topic,
                 func=func,
-                model_type=model_type,
-                deserializer_type=deserializer_type,
-                return_model_type=return_model_type,
-                serializer_type=serializer_type,
+                param_type=param_type,
+                deserializer=deserializer,
+                return_type=return_type,
+                serializer=serializer,
                 sink_topics=sink_topics,
             )
             return func
