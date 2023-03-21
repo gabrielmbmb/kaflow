@@ -1,5 +1,5 @@
 from kaflow.applications import Kaflow
-from kaflow.serialize import Avro, Json
+from kaflow.serializers import Avro, Json
 
 __all__ = ["Kaflow", "Json", "Avro"]
 

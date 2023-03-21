@@ -3,6 +3,11 @@ from typing import Annotated, Any, Protocol, TypeVar
 
 from pydantic import BaseModel
 
+try:
+    import fastavro
+except ImportError:
+    fastavro = None
+
 
 class Serializer(Protocol):
     @staticmethod
@@ -25,9 +30,21 @@ class JsonSerializer(Serializer):
 
 
 class AvroSerializer(Serializer):
+    @staticmethod
+    def serialize(data: BaseModel) -> bytes:
+        return fastavro.schemaless_writer(data)
+
+    @staticmethod
+    def deserialize(data: bytes) -> Any:
+        return fastavro.schemaless_reader(data)
+
+
+class FastAvroSerializer(Serializer):
     pass
 
 
+MessageSerializerFlag = "MessageSerializer"
+
 _BaseModelT = TypeVar("_BaseModelT", bound=BaseModel)
-Json = Annotated[_BaseModelT, JsonSerializer]
-Avro = Annotated[_BaseModelT, AvroSerializer]
+Json = Annotated[_BaseModelT, JsonSerializer, MessageSerializerFlag]
+Avro = Annotated[_BaseModelT, AvroSerializer, MessageSerializerFlag]
