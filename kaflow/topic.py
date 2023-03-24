@@ -8,7 +8,7 @@ from di.executors import AsyncExecutor
 from pydantic import BaseModel
 
 from kaflow._utils.asyncio import task_group
-from kaflow._utils.di import Scopes
+from kaflow.dependencies import Scopes
 from kaflow.exceptions import KaflowDistributeException
 
 if TYPE_CHECKING:

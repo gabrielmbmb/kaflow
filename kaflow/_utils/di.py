@@ -1,1 +1,0 @@
-Scopes = ("app", "consumer")

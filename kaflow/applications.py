@@ -18,12 +18,12 @@ from di.dependent import Dependent
 from di.executors import AsyncExecutor
 from pydantic import BaseModel
 
-from kaflow._utils.di import Scopes
 from kaflow._utils.inspect import (
     annotated_param_with,
     has_return_annotation,
     signature_contains_annotated_param_with,
 )
+from kaflow.dependencies import Scopes
 from kaflow.serializers import MessageSerializerFlag
 from kaflow.topic import TopicProcessor
 
