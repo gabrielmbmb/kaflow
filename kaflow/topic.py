@@ -23,7 +23,8 @@ class TopicProcessingFunc:
     __slots__ = (
         "dependent",
         "container",
-        "return_model_type",
+        "param_type",
+        "return_type",
         "serializer_type",
         "sink_topics",
         "executor",
@@ -33,13 +34,15 @@ class TopicProcessingFunc:
         self,
         dependent: SolvedDependent[Any],
         container: Container,
-        return_model_type: type[BaseModel] | None = None,
+        param_type: type[BaseModel],
+        return_type: type[BaseModel] | None = None,
         serializer_type: type[Serializer] | None = None,
         sink_topics: Sequence[str] | None = None,
     ) -> None:
         self.dependent = dependent
         self.container = container
-        self.return_model_type = return_model_type
+        self.param_type = param_type
+        self.return_type = return_type
         self.serializer_type = serializer_type
         self.sink_topics = sink_topics
         self.executor = AsyncExecutor()
@@ -56,17 +59,17 @@ class TopicProcessingFunc:
             return_model = await self.dependent.execute_async(
                 executor=self.executor,
                 state=consumer_state,
-                values={BaseModel: model},
+                values={self.param_type: model},
             )
         if (
             return_model
-            and self.return_model_type
-            and not isinstance(return_model, self.return_model_type)
+            and self.return_type
+            and not isinstance(return_model, self.return_type)
         ):
             func_name = self.dependent.dependency.call.__name__  # type: ignore
             raise TypeError(
                 f"Return type of `{func_name}` function is not of"
-                f" `{self.return_model_type.__name__}` type"
+                f" `{self.return_type.__name__}` type"
             )
 
         if self.sink_topics and self.serializer_type and return_model:
@@ -120,7 +123,8 @@ class TopicProcessor:
                     Dependent(func, scope="consumer"), scopes=Scopes
                 ),
                 container=self.container,
-                return_model_type=return_type,
+                param_type=self.param_type,
+                return_type=return_type,
                 serializer_type=serializer,
                 sink_topics=sink_topics,
             )
