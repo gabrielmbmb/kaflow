@@ -9,10 +9,12 @@ from typing import (
     AsyncContextManager,
     AsyncIterator,
     Callable,
+    Literal,
     Sequence,
 )
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from aiokafka.helpers import create_ssl_context
 from di import Container, ScopeState
 from di.dependent import Dependent
 from di.executors import AsyncExecutor
@@ -47,19 +49,54 @@ def annotated_serializer_info(param: Any) -> tuple[type[BaseModel], type[Seriali
     return param_type, deserializer
 
 
+SecurityProtocol = Literal["PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"]
+SaslMechanism = Literal[
+    "PLAIN", "GSSAPI", "OAUTHBEARER", "SCRAM-SHA-256", "SCRAM-SHA-512"
+]
+AutoOffsetReset = Literal["earliest", "latest", "none"]
+
+
 class Kaflow:
     def __init__(
         self,
         name: str,
         brokers: str | list[str],
+        security_protocol: SecurityProtocol = "PLAINTEXT",
+        cafile: str | None = None,
+        capath: str | None = None,
+        cadata: bytes | None = None,
+        certfile: str | None = None,
+        keyfile: str | None = None,
+        cert_password: str | None = None,
+        sasl_mechanism: SaslMechanism | None = None,
+        sasl_plain_username: str | None = None,
+        sasl_plain_password: str | None = None,
+        auto_offset_reset: AutoOffsetReset = "earliest",
         auto_commit: bool = True,
         auto_commit_interval_ms: int = 5000,
         lifespan: Callable[..., AsyncContextManager[None]] | None = None,
     ) -> None:
         self.name = name
         self.brokers = brokers
+        self.security_protocol = security_protocol
+        self.sasl_mechanism = sasl_mechanism
+        self.sasl_plain_username = sasl_plain_username
+        self.sasl_plain_password = sasl_plain_password
+        self.auto_offset_reset = auto_offset_reset
         self.auto_commit = auto_commit
         self.auto_commit_interval_ms = auto_commit_interval_ms
+
+        if security_protocol == "SSL" or security_protocol == "SASL_SSL":
+            self.ssl_context = create_ssl_context(
+                cafile=cafile,
+                capath=capath,
+                cadata=cadata,
+                certfile=certfile,
+                keyfile=keyfile,
+                password=cert_password,
+            )
+        else:
+            self.ssl_context = None
 
         self._container = Container()
         self._container_state = ScopeState()
@@ -141,7 +178,13 @@ class Kaflow:
             *self._topics_processors.keys(),
             loop=self._loop,
             bootstrap_servers=self.brokers,
+            ssl_context=self.ssl_context,
+            security_protocol=self.security_protocol,
+            sasl_mechanism=self.sasl_mechanism,
+            sasl_plain_username=self.sasl_plain_username,
+            sasl_plain_password=self.sasl_plain_password,
             enable_auto_commit=self.auto_commit,
+            auto_offset_reset=self.auto_offset_reset,
             auto_commit_interval_ms=self.auto_commit_interval_ms,
         )
 
@@ -149,6 +192,11 @@ class Kaflow:
         return AIOKafkaProducer(
             loop=self._loop,
             bootstrap_servers=self.brokers,
+            ssl_context=self.ssl_context,
+            security_protocol=self.security_protocol,
+            sasl_mechanism=self.sasl_mechanism,
+            sasl_plain_username=self.sasl_plain_username,
+            sasl_plain_password=self.sasl_plain_password,
         )
 
     def consume(
