@@ -25,7 +25,8 @@ class TopicProcessingFunc:
         "container",
         "param_type",
         "return_type",
-        "serializer_type",
+        "serializer",
+        "serializer_extra",
         "sink_topics",
         "executor",
     )
@@ -36,14 +37,16 @@ class TopicProcessingFunc:
         container: Container,
         param_type: type[BaseModel],
         return_type: type[BaseModel] | None = None,
-        serializer_type: type[Serializer] | None = None,
+        serializer: type[Serializer] | None = None,
+        serializer_extra: dict[str, Any] | None = None,
         sink_topics: Sequence[str] | None = None,
     ) -> None:
         self.dependent = dependent
         self.container = container
         self.param_type = param_type
         self.return_type = return_type
-        self.serializer_type = serializer_type
+        self.serializer = serializer
+        self.serializer_extra = serializer_extra or {}
         self.sink_topics = sink_topics
         self.executor = AsyncExecutor()
 
@@ -72,8 +75,8 @@ class TopicProcessingFunc:
                 f" `{self.return_type.__name__}` type"
             )
 
-        if self.sink_topics and self.serializer_type and return_model:
-            message = self.serializer_type.serialize(return_model)
+        if self.sink_topics and self.serializer and return_model:
+            message = self.serializer.serialize(return_model, **self.serializer_extra)
             for topic in self.sink_topics:
                 asyncio.create_task(callback_fn(topic, message))
 
@@ -83,6 +86,7 @@ class TopicProcessor:
         "name",
         "param_type",
         "deserializer",
+        "deserializer_extra",
         "container",
         "container_state",
         "funcs",
@@ -93,11 +97,13 @@ class TopicProcessor:
         name: str,
         param_type: type[BaseModel],
         deserializer: type[Serializer],
+        deserializer_extra: dict[str, Any],
         container: Container,
     ) -> None:
         self.name = name
         self.param_type = param_type
         self.deserializer = deserializer
+        self.deserializer_extra = deserializer_extra
         self.container = container
         self.funcs: list[Callable[..., Coroutine[Any, Any, None]]] = []
 
@@ -115,6 +121,7 @@ class TopicProcessor:
         func: ConsumerFunc,
         return_type: type[BaseModel] | None,
         serializer: type[Serializer] | None,
+        serializer_extra: dict[str, Any] | None,
         sink_topics: Sequence[str] | None = None,
     ) -> None:
         self.funcs.append(
@@ -125,7 +132,8 @@ class TopicProcessor:
                 container=self.container,
                 param_type=self.param_type,
                 return_type=return_type,
-                serializer_type=serializer,
+                serializer=serializer,
+                serializer_extra=serializer_extra,
                 sink_topics=sink_topics,
             )
         )
@@ -135,7 +143,7 @@ class TopicProcessor:
         record: ConsumerRecord,
         callback_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
     ) -> None:
-        raw = self.deserializer.deserialize(record.value)
+        raw = self.deserializer.deserialize(record.value, **self.deserializer_extra)
         model = self.param_type(**raw)
         try:
             await task_group(self.funcs, model, self.container_state, callback_fn)

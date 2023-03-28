@@ -29,6 +29,6 @@ def signature_contains_annotated_param_with(
 
 def has_return_annotation(signature: Signature) -> bool:
     return (
-        signature.return_annotation
+        signature.return_annotation is not None
         and signature.return_annotation != inspect.Signature.empty
     )

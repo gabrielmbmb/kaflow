@@ -1,3 +1,4 @@
+import io
 import json
 from typing import Annotated, Any, Protocol, TypeVar
 
@@ -11,40 +12,48 @@ except ImportError:
 
 class Serializer(Protocol):
     @staticmethod
-    def serialize(data: BaseModel) -> bytes:
+    def serialize(data: BaseModel, **kwargs: Any) -> bytes:
         ...
 
     @staticmethod
-    def deserialize(data: bytes) -> Any:
+    def deserialize(data: bytes, **kwargs: Any) -> Any:
         ...
+
+    @staticmethod
+    def extra_annotations_keys() -> list[str]:
+        return []
 
 
 class JsonSerializer(Serializer):
     @staticmethod
-    def serialize(data: BaseModel) -> bytes:
+    def serialize(data: BaseModel, **kwargs: Any) -> bytes:
         return data.json().encode()
 
     @staticmethod
-    def deserialize(data: bytes) -> Any:
+    def deserialize(data: bytes, **kwargs: Any) -> Any:
         return json.loads(data)
 
 
 class AvroSerializer(Serializer):
     @staticmethod
-    def serialize(data: BaseModel) -> bytes:
-        return fastavro.schemaless_writer(data)
+    def serialize(data: BaseModel, **kwargs: Any) -> bytes:
+        schema = kwargs.get("avro_schema")
+        bytes_io = io.BytesIO()
+        fastavro.schemaless_writer(bytes_io, schema, data.dict())
+        return bytes_io.getvalue()
 
     @staticmethod
-    def deserialize(data: bytes) -> Any:
-        return fastavro.schemaless_reader(data)
+    def deserialize(data: bytes, **kwargs: Any) -> Any:
+        schema = kwargs.get("avro_schema")
+        return fastavro.schemaless_reader(io.BytesIO(data), schema)
+
+    @staticmethod
+    def extra_annotations_keys() -> list[str]:
+        return ["avro_schema"]
 
 
-class FastAvroSerializer(Serializer):
-    pass
-
-
-MessageSerializerFlag = "MessageSerializer"
+MESSAGE_SERIALIZER_FLAG = "MessageSerializer"
 
 _BaseModelT = TypeVar("_BaseModelT", bound=BaseModel)
-Json = Annotated[_BaseModelT, JsonSerializer, MessageSerializerFlag]
-Avro = Annotated[_BaseModelT, AvroSerializer, MessageSerializerFlag]
+Json = Annotated[_BaseModelT, JsonSerializer, MESSAGE_SERIALIZER_FLAG]
+Avro = Annotated[_BaseModelT, AvroSerializer, MESSAGE_SERIALIZER_FLAG]
