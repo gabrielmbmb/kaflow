@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 from contextlib import asynccontextmanager
+from functools import wraps
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -33,7 +35,7 @@ from kaflow.topic import TopicProcessor
 
 if TYPE_CHECKING:
     from kaflow.serializers import Serializer
-    from kaflow.typing import TopicFunc
+    from kaflow.typing import ConsumerFunc, ProducerFunc
 
 
 def annotated_serializer_info(
@@ -126,6 +128,7 @@ class Kaflow:
         self._producer: AIOKafkaProducer | None = None
 
         self._topics_processors: dict[str, TopicProcessor] = {}
+        self._topics_producers: dict[str, TopicProcessor] = {}
 
         @asynccontextmanager
         async def lifespan_ctx() -> AsyncIterator[None]:
@@ -160,7 +163,7 @@ class Kaflow:
     def _add_topic_processor(
         self,
         topic: str,
-        func: TopicFunc,
+        func: ConsumerFunc,
         param_type: type[BaseModel],
         deserializer: type[Serializer],
         deserializer_extra: dict[str, Any],
@@ -228,8 +231,8 @@ class Kaflow:
 
     def consume(
         self, topic: str, sink_topics: Sequence[str] | None = None
-    ) -> Callable[[TopicFunc], TopicFunc]:
-        def register_consumer(func: TopicFunc) -> TopicFunc:
+    ) -> Callable[[ConsumerFunc], ConsumerFunc]:
+        def register_consumer(func: ConsumerFunc) -> ConsumerFunc:
             signature = inspect.signature(func)
             message_serializer_param = signature_contains_annotated_param_with(
                 MESSAGE_SERIALIZER_FLAG, signature
@@ -252,11 +255,11 @@ class Kaflow:
                 ):
                     raise ValueError(
                         f"`{signature.return_annotation}` cannot be used as a return"
-                        f" type for '{func.__name__}' consumer function. Consumers"
+                        f" type for '{func.__name__}' consumer function. Consumer"
                         " functions must return a message annotated with a serializer"
                         " like `kaflow.serializers.Json`: `async def"
-                        " process_topic(message: Json[BaseModel]) -> Json[BaseModel]:"
-                        " ...`"
+                        f" {func.__name__}(message: Json[BaseModel]) ->"
+                        " Json[BaseModel]: ...`"
                     )
                 else:
                     (
@@ -283,6 +286,52 @@ class Kaflow:
             return func
 
         return register_consumer
+
+    def produce(self, sink_topic: str) -> Callable[[ProducerFunc], ProducerFunc]:
+        def register_producer(func: ProducerFunc) -> Callable[..., Any]:
+            signature = inspect.signature(func)
+            if not has_return_annotation(signature) or not annotated_param_with(
+                MESSAGE_SERIALIZER_FLAG, signature.return_annotation
+            ):
+                raise ValueError(
+                    f"`{signature.return_annotation}` cannot be used as a return type"
+                    f" for '{func.__name__}' consumer function. Producer functions must"
+                    " return a message annotated with a serializer like"
+                    f" `kaflow.serializers.Json`: `async def {func.__name__}() ->"
+                    " Json[BaseModel]: ...`"
+                )
+            (_, serializer, serializer_extra) = annotated_serializer_info(
+                signature.return_annotation
+            )
+
+            serialize = functools.partial(
+                serializer.serialize, **serializer_extra or {}
+            )
+
+            if is_not_coroutine_function(func):
+
+                @wraps(func)
+                def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+                    r = func(*args, **kwargs)
+                    message = serialize(r)
+                    asyncio.run_coroutine_threadsafe(
+                        coro=self._publish(topic=sink_topic, value=message),
+                        loop=self._loop,
+                    )
+                    return r
+
+                return sync_wrapper
+
+            @wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                r = await func(*args, **kwargs)  # type: ignore
+                message = serialize(r)
+                await self._publish(topic=sink_topic, value=message)
+                return r
+
+            return async_wrapper
+
+        return register_producer
 
     async def _publish(self, topic: str, value: bytes) -> None:
         if not self._producer:

@@ -4,6 +4,6 @@ from typing import Awaitable, Callable, Union
 
 from pydantic import BaseModel
 
-TopicFuncR = Union[BaseModel, None]
-
-TopicFunc = Callable[..., TopicFuncR | Awaitable[TopicFuncR]]
+ConsumerFuncR = Union[BaseModel, None]
+ConsumerFunc = Callable[..., ConsumerFuncR | Awaitable[ConsumerFuncR]]
+ProducerFunc = Callable[..., BaseModel | Awaitable[BaseModel]]
