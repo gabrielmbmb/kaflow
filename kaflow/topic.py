@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Sequence
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Sequence
 
 from di.dependent import Dependent
 from di.executors import AsyncExecutor
@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 from kaflow._utils.asyncio import task_group
 from kaflow.dependencies import Scopes
-from kaflow.exceptions import KaflowDistributeException
 
 if TYPE_CHECKING:
     from aiokafka import ConsumerRecord
@@ -50,35 +49,61 @@ class TopicProcessingFunc:
         self.sink_topics = sink_topics
         self.executor = AsyncExecutor()
 
-    async def __call__(
+    async def _execute_dependent(
         self,
+        consumer_state: ScopeState,
         model: BaseModel,
-        state: ScopeState,
-        callback_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
-    ) -> None:
-        async with self.container.enter_scope(
-            "consumer", state=state
-        ) as consumer_state:
-            return_model = await self.dependent.execute_async(
+        exception_handlers: dict[
+            type[Exception], Callable[[Exception], Awaitable[Any]]
+        ],
+    ) -> Any | None:
+        try:
+            return await self.dependent.execute_async(
                 executor=self.executor,
                 state=consumer_state,
                 values={self.param_type: model},
             )
-        if (
-            return_model
-            and self.return_type
-            and not isinstance(return_model, self.return_type)
-        ):
-            func_name = self.dependent.dependency.call.__name__  # type: ignore
+        except tuple(exception_handlers.keys()) as e:
+            await exception_handlers[type(e)](e)
+
+    def _validate_return_type(self, return_model: BaseModel) -> None:
+        if self.return_type and not isinstance(return_model, self.return_type):
+            func_name = self.dependent.dependency.call.__name__
             raise TypeError(
                 f"Return type of `{func_name}` function is not of"
                 f" `{self.return_type.__name__}` type"
             )
 
+    def _publish_messages(
+        self,
+        return_model: BaseModel,
+        publish_fn: Callable[[str, bytes], Awaitable[Any]],
+    ) -> None:
         if self.sink_topics and self.serializer and return_model:
             message = self.serializer.serialize(return_model, **self.serializer_extra)
             for topic in self.sink_topics:
-                asyncio.create_task(callback_fn(topic, message))
+                asyncio.create_task(publish_fn(topic, message))
+
+    async def __call__(
+        self,
+        model: BaseModel,
+        state: ScopeState,
+        publish_fn: Callable[[str, bytes], Awaitable[Any]],
+        exception_handlers: dict[
+            type[Exception], Callable[[Exception], Awaitable[Any]]
+        ],
+    ) -> None:
+        async with self.container.enter_scope(
+            "consumer", state=state
+        ) as consumer_state:
+            return_model = await self._execute_dependent(
+                consumer_state=consumer_state,
+                model=model,
+                exception_handlers=exception_handlers,
+            )
+        if return_model:
+            self._validate_return_type(return_model)
+            self._publish_messages(return_model=return_model, publish_fn=publish_fn)
 
 
 class TopicProcessor:
@@ -105,7 +130,7 @@ class TopicProcessor:
         self.deserializer = deserializer
         self.deserializer_extra = deserializer_extra
         self.container = container
-        self.funcs: list[Callable[..., Coroutine[Any, Any, None]]] = []
+        self.funcs: list[Callable[..., Awaitable[Any]]] = []
 
     def __repr__(self) -> str:
         return (
@@ -141,17 +166,17 @@ class TopicProcessor:
     async def distribute(
         self,
         record: ConsumerRecord,
-        callback_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
+        publish_fn: Callable[[str, bytes], Awaitable[Any]],
+        exception_handlers: dict[
+            type[Exception], Callable[[Exception], Awaitable[Any]]
+        ],
     ) -> None:
         raw = self.deserializer.deserialize(record.value, **self.deserializer_extra)
         model = self.param_type(**raw)
-        try:
-            await task_group(self.funcs, model, self.container_state, callback_fn)
-        except Exception as e:
-            raise KaflowDistributeException(
-                (
-                    "An error occurred while distributing message to functions"
-                    f" consuming topic '{self.name}'."
-                ),
-                record=record,
-            ) from e
+        await task_group(
+            self.funcs,
+            model=model,
+            state=self.container_state,
+            publish_fn=publish_fn,
+            exception_handlers=exception_handlers,
+        )

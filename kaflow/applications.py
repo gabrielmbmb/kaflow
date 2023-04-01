@@ -35,7 +35,7 @@ from kaflow.topic import TopicProcessor
 
 if TYPE_CHECKING:
     from kaflow.serializers import Serializer
-    from kaflow.typing import ConsumerFunc, ProducerFunc
+    from kaflow.typing import ConsumerFunc, ExceptionHandlerFunc, ProducerFunc
 
 
 def annotated_serializer_info(
@@ -128,6 +128,7 @@ class Kaflow:
         self._producer: AIOKafkaProducer | None = None
 
         self._topics_processors: dict[str, TopicProcessor] = {}
+        self._exception_handlers: dict[type[Exception], ExceptionHandlerFunc] = {}
         self._sink_topics: set[str] = set()
 
         @asynccontextmanager
@@ -230,7 +231,9 @@ class Kaflow:
         )
 
     def consume(
-        self, topic: str, sink_topics: Sequence[str] | None = None
+        self,
+        topic: str,
+        sink_topics: Sequence[str] | None = None,
     ) -> Callable[[ConsumerFunc], ConsumerFunc]:
         def register_consumer(func: ConsumerFunc) -> ConsumerFunc:
             signature = inspect.signature(func)
@@ -335,6 +338,15 @@ class Kaflow:
 
         return register_producer
 
+    def exception_handler(self, exception: type[Exception]) -> None:
+        def register_exception_handler(
+            func: ExceptionHandlerFunc,
+        ) -> ExceptionHandlerFunc:
+            self._exception_handlers[exception] = func
+            return func
+
+        return register_exception_handler
+
     async def _publish(self, topic: str, value: bytes) -> None:
         if not self._producer:
             raise RuntimeError(
@@ -353,7 +365,11 @@ class Kaflow:
             )
         async for record in self._consumer:
             topic = record.topic
-            await self._topics_processors[topic].distribute(record, self._publish)
+            await self._topics_processors[topic].distribute(
+                record=record,
+                publish_fn=self._publish,
+                exception_handlers=self._exception_handlers,
+            )
 
     async def start(self) -> None:
         self._consumer = self._create_consumer()
