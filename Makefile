@@ -3,7 +3,7 @@ sources = kaflow tests
 
 .PHONY: install
 install: 
-	pip install -e .[dev]
+	pip install -e .[dev,test]
 
 .PHONY: format
 format:

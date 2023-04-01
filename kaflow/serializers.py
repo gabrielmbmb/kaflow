@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import io
 import json
-from typing import Annotated, Any, Protocol, TypeVar, cast
+from typing import Any, Protocol, TypeVar, cast
 
 from pydantic import BaseModel
+
+from kaflow._utils.typing import Annotated
 
 try:
     import fastavro
