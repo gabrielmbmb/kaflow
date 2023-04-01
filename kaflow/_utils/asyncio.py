@@ -1,4 +1,8 @@
+from __future__ import annotations
+
 import asyncio
+import contextvars
+import functools
 import sys
 from typing import Any, Awaitable, Callable, Coroutine, TypeVar
 
@@ -52,6 +56,10 @@ def asyncify(func: Callable[P, R]) -> Callable[P, Awaitable[R]]:
     """
 
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        return await asyncio.to_thread(func, *args, **kwargs)
+        # TODO: update to use `asyncio.to_thread`, once Python 3.8 is deprecated
+        loop = asyncio.get_running_loop()
+        ctx = contextvars.copy_context()
+        func_call = functools.partial(ctx.run, func, *args, **kwargs)
+        return await loop.run_in_executor(None, func_call)  # type: ignore
 
     return wrapper
