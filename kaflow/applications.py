@@ -20,9 +20,11 @@ from di.dependent import Dependent
 from di.executors import AsyncExecutor
 from pydantic import BaseModel
 
+from kaflow._utils.asyncio import asyncify
 from kaflow._utils.inspect import (
     annotated_param_with,
     has_return_annotation,
+    is_not_coroutine_function,
     signature_contains_annotated_param_with,
 )
 from kaflow.dependencies import Scopes
@@ -31,7 +33,7 @@ from kaflow.topic import TopicProcessor
 
 if TYPE_CHECKING:
     from kaflow.serializers import Serializer
-    from kaflow.typing import ConsumerFunc
+    from kaflow.typing import TopicFunc
 
 
 def annotated_serializer_info(
@@ -158,7 +160,7 @@ class Kaflow:
     def _add_topic_processor(
         self,
         topic: str,
-        func: ConsumerFunc,
+        func: TopicFunc,
         param_type: type[BaseModel],
         deserializer: type[Serializer],
         deserializer_extra: dict[str, Any],
@@ -226,13 +228,8 @@ class Kaflow:
 
     def consume(
         self, topic: str, sink_topics: Sequence[str] | None = None
-    ) -> Callable[[ConsumerFunc], ConsumerFunc]:
-        def register_consumer(func: ConsumerFunc) -> ConsumerFunc:
-            if not asyncio.iscoroutinefunction(func):
-                raise ValueError(
-                    f"'{func.__name__}' is not a coroutine. Consumer functions must be"
-                    f" coroutines (`async def {func.__name__}`)."
-                )
+    ) -> Callable[[TopicFunc], TopicFunc]:
+        def register_consumer(func: TopicFunc) -> TopicFunc:
             signature = inspect.signature(func)
             message_serializer_param = signature_contains_annotated_param_with(
                 MESSAGE_SERIALIZER_FLAG, signature
@@ -281,6 +278,8 @@ class Kaflow:
                 serializer_extra=serializer_extra,
                 sink_topics=sink_topics,
             )
+            if is_not_coroutine_function(func):
+                func = asyncify(func)
             return func
 
         return register_consumer

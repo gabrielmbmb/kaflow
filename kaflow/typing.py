@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Union
 
 from pydantic import BaseModel
 
-ConsumerFunc = Callable[..., Awaitable[BaseModel | None]]
+TopicFuncR = Union[BaseModel, None]
+
+TopicFunc = Callable[..., TopicFuncR | Awaitable[TopicFuncR]]
