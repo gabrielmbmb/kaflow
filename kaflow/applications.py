@@ -178,7 +178,7 @@ class Kaflow:
                 topic_processor.param_type != param_type
                 or topic_processor.deserializer != deserializer
             ):
-                self._loop.run_until_complete(self._stop())
+                self._loop.run_until_complete(self.stop())
                 raise TypeError(
                     f"Topic '{topic}' is already registered with a different model"
                     f" and/or deserializer. TopicProcessor: {topic_processor}."
@@ -281,6 +281,7 @@ class Kaflow:
                 serializer_extra=serializer_extra,
                 sink_topics=sink_topics,
             )
+            self._sink_topics.update(sink_topics or [])
             if is_not_coroutine_function(func):
                 func = asyncify(func)
             return func
@@ -354,7 +355,7 @@ class Kaflow:
             topic = record.topic
             await self._topics_processors[topic].distribute(record, self._publish)
 
-    async def _start(self) -> None:
+    async def start(self) -> None:
         self._consumer = self._create_consumer()
         self._producer = self._create_producer()
 
@@ -363,7 +364,7 @@ class Kaflow:
             await self._producer.start()
             await self._consuming_loop()
 
-    async def _stop(self) -> None:
+    async def stop(self) -> None:
         if self._consumer:
             await self._consumer.stop()
         if self._producer:
@@ -371,13 +372,13 @@ class Kaflow:
 
     def run(self) -> None:
         try:
-            self._loop.run_until_complete(self._start())
+            self._loop.run_until_complete(self.start())
         except asyncio.CancelledError:
             pass
         except KeyboardInterrupt:
             pass
         finally:
-            self._loop.run_until_complete(self._stop())
+            self._loop.run_until_complete(self.stop())
             self._loop.close()
 
     @property
