@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, Sequence
 
 from di.dependent import Dependent
 from di.executors import AsyncExecutor
@@ -9,13 +9,18 @@ from pydantic import BaseModel
 
 from kaflow._utils.asyncio import task_group
 from kaflow.dependencies import Scopes
+from kaflow.exceptions import KaflowDeserializationException
 
 if TYPE_CHECKING:
     from aiokafka import ConsumerRecord
     from di import Container, ScopeState, SolvedDependent
 
     from kaflow.serializers import Serializer
-    from kaflow.typing import ConsumerFunc
+    from kaflow.typing import (
+        ConsumerFunc,
+        DeserializationErrorHandlerFunc,
+        ExceptionHandlerFunc,
+    )
 
 
 class TopicProcessingFunc:
@@ -65,10 +70,11 @@ class TopicProcessingFunc:
             )
         except tuple(exception_handlers.keys()) as e:
             await exception_handlers[type(e)](e)
+            return None
 
     def _validate_return_type(self, return_model: BaseModel) -> None:
         if self.return_type and not isinstance(return_model, self.return_type):
-            func_name = self.dependent.dependency.call.__name__
+            func_name = self.dependent.dependency.call.__name__  # type: ignore
             raise TypeError(
                 f"Return type of `{func_name}` function is not of"
                 f" `{self.return_type.__name__}` type"
@@ -77,7 +83,7 @@ class TopicProcessingFunc:
     def _publish_messages(
         self,
         return_model: BaseModel,
-        publish_fn: Callable[[str, bytes], Awaitable[Any]],
+        publish_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
     ) -> None:
         if self.sink_topics and self.serializer and return_model:
             message = self.serializer.serialize(return_model, **self.serializer_extra)
@@ -88,7 +94,7 @@ class TopicProcessingFunc:
         self,
         model: BaseModel,
         state: ScopeState,
-        publish_fn: Callable[[str, bytes], Awaitable[Any]],
+        publish_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
         exception_handlers: dict[
             type[Exception], Callable[[Exception], Awaitable[Any]]
         ],
@@ -130,7 +136,7 @@ class TopicProcessor:
         self.deserializer = deserializer
         self.deserializer_extra = deserializer_extra
         self.container = container
-        self.funcs: list[Callable[..., Awaitable[Any]]] = []
+        self.funcs: list[Callable[..., Coroutine[Any, Any, None]]] = []
 
     def __repr__(self) -> str:
         return (
@@ -166,17 +172,25 @@ class TopicProcessor:
     async def distribute(
         self,
         record: ConsumerRecord,
-        publish_fn: Callable[[str, bytes], Awaitable[Any]],
-        exception_handlers: dict[
-            type[Exception], Callable[[Exception], Awaitable[Any]]
-        ],
+        publish_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
+        exception_handlers: dict[type[Exception], ExceptionHandlerFunc],
+        deserialization_error_handler: DeserializationErrorHandlerFunc | None = None,
     ) -> None:
-        raw = self.deserializer.deserialize(record.value, **self.deserializer_extra)
-        model = self.param_type(**raw)
-        await task_group(
-            self.funcs,
-            model=model,
-            state=self.container_state,
-            publish_fn=publish_fn,
-            exception_handlers=exception_handlers,
-        )
+        try:
+            raw = self.deserializer.deserialize(record.value, **self.deserializer_extra)
+            model = self.param_type(**raw)
+        except Exception as e:
+            if not deserialization_error_handler:
+                raise KaflowDeserializationException(
+                    f"Failed to deserialize message from topic `{self.name}`",
+                    record=record,
+                ) from e
+            await deserialization_error_handler(e, record)
+        else:
+            await task_group(
+                self.funcs,
+                model=model,
+                state=self.container_state,
+                publish_fn=publish_fn,
+                exception_handlers=exception_handlers,
+            )

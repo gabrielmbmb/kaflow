@@ -10,7 +10,7 @@ class KaflowException(Exception):
     ...
 
 
-class KaflowDistributeException(KaflowException):
+class KaflowDeserializationException(KaflowException):
     def __init__(self, message: str, record: ConsumerRecord) -> None:
         super().__init__(message)
         self.record = record
