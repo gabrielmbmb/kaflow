@@ -40,10 +40,8 @@ dev = [
   "coverage[toml] >=7.0.0",
   "types-protobuf >=3.20.0",
 ]
-avro = [
-  "fastavro >=1.7.3"
-]
-protobuf = [
+test = [
+  "fastavro >=1.7.3",
   "protobuf >=3.20.0"
 ]
 
