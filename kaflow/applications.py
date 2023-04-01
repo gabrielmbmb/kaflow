@@ -35,7 +35,12 @@ from kaflow.topic import TopicProcessor
 
 if TYPE_CHECKING:
     from kaflow.serializers import Serializer
-    from kaflow.typing import ConsumerFunc, ProducerFunc
+    from kaflow.typing import (
+        ConsumerFunc,
+        DeserializationErrorHandlerFunc,
+        ExceptionHandlerFunc,
+        ProducerFunc,
+    )
 
 
 def annotated_serializer_info(
@@ -129,6 +134,11 @@ class Kaflow:
 
         self._topics_processors: dict[str, TopicProcessor] = {}
         self._sink_topics: set[str] = set()
+
+        self._exception_handlers: dict[type[Exception], ExceptionHandlerFunc] = {}
+        self._deserialization_error_handler: DeserializationErrorHandlerFunc | None = (
+            None
+        )
 
         @asynccontextmanager
         async def lifespan_ctx() -> AsyncIterator[None]:
@@ -230,7 +240,9 @@ class Kaflow:
         )
 
     def consume(
-        self, topic: str, sink_topics: Sequence[str] | None = None
+        self,
+        topic: str,
+        sink_topics: Sequence[str] | None = None,
     ) -> Callable[[ConsumerFunc], ConsumerFunc]:
         def register_consumer(func: ConsumerFunc) -> ConsumerFunc:
             signature = inspect.signature(func)
@@ -335,11 +347,33 @@ class Kaflow:
 
         return register_producer
 
+    def exception_handler(
+        self, exception: type[Exception]
+    ) -> Callable[[ExceptionHandlerFunc], ExceptionHandlerFunc]:
+        def register_exception_handler(
+            func: ExceptionHandlerFunc,
+        ) -> ExceptionHandlerFunc:
+            self._exception_handlers[exception] = func
+            return func
+
+        return register_exception_handler
+
+    def deserialization_error_handler(
+        self,
+    ) -> Callable[[DeserializationErrorHandlerFunc], DeserializationErrorHandlerFunc]:
+        def register_deserialization_error_handler(
+            func: DeserializationErrorHandlerFunc,
+        ) -> DeserializationErrorHandlerFunc:
+            self._deserialization_error_handler = func
+            return func
+
+        return register_deserialization_error_handler
+
     async def _publish(self, topic: str, value: bytes) -> None:
         if not self._producer:
             raise RuntimeError(
                 "The producer has not been started yet. You're probably seeing this"
-                f" error because `{self.__class__.__name__}.run` method has not been"
+                f" error because `{self.__class__.__name__}.start` method has not been"
                 " called yet."
             )
         await self._producer.send_and_wait(topic=topic, value=value)
@@ -348,12 +382,16 @@ class Kaflow:
         if not self._consumer:
             raise RuntimeError(
                 "The consumer has not been started yet. You're probably seeing this"
-                f" error because `{self.__class__.__name__}.run` method has not been"
+                f" error because `{self.__class__.__name__}.start` method has not been"
                 " called yet."
             )
         async for record in self._consumer:
-            topic = record.topic
-            await self._topics_processors[topic].distribute(record, self._publish)
+            await self._topics_processors[record.topic].distribute(
+                record=record,
+                publish_fn=self._publish,
+                exception_handlers=self._exception_handlers,
+                deserialization_error_handler=self._deserialization_error_handler,
+            )
 
     async def start(self) -> None:
         self._consumer = self._create_consumer()
