@@ -14,8 +14,10 @@ else:
 
 
 if sys.version_info < (3, 10):
-    from typing_extension import get_args as get_args
-    from typing_extension import get_origin as get_origin
+    from typing_extensions import ParamSpec as ParamSpec
+    from typing_extensions import get_args as get_args
+    from typing_extensions import get_origin as get_origin
 else:
+    from typing import ParamSpec as ParamSpec
     from typing import get_args as get_args
     from typing import get_origin as get_origin

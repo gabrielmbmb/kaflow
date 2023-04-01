@@ -1,6 +1,8 @@
 import asyncio
 import sys
-from typing import Any, Callable, Coroutine
+from typing import Any, Awaitable, Callable, Coroutine, TypeVar
+
+from kaflow._utils.typing import ParamSpec
 
 
 async def task_group(
@@ -34,3 +36,24 @@ async def task_group(
                     tg.create_task(func(*args, **kwargs))
         except* Exception as eg:
             raise Exception from eg
+
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+# Inspired by https://github.com/tiangolo/asyncer
+def asyncify(func: Callable[P, R]) -> Callable[P, Awaitable[R]]:
+    """A decorator to convert a synchronous function into an asynchronous one.
+
+    Args:
+        func: The synchronous function to convert.
+
+    Returns:
+        The asynchronous function.
+    """
+
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+    return wrapper
