@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 from contextlib import asynccontextmanager
+from functools import wraps
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -20,9 +22,11 @@ from di.dependent import Dependent
 from di.executors import AsyncExecutor
 from pydantic import BaseModel
 
+from kaflow._utils.asyncio import asyncify
 from kaflow._utils.inspect import (
     annotated_param_with,
     has_return_annotation,
+    is_not_coroutine_function,
     signature_contains_annotated_param_with,
 )
 from kaflow.dependencies import Scopes
@@ -31,7 +35,7 @@ from kaflow.topic import TopicProcessor
 
 if TYPE_CHECKING:
     from kaflow.serializers import Serializer
-    from kaflow.typing import ConsumerFunc
+    from kaflow.typing import ConsumerFunc, ProducerFunc
 
 
 def annotated_serializer_info(
@@ -124,6 +128,7 @@ class Kaflow:
         self._producer: AIOKafkaProducer | None = None
 
         self._topics_processors: dict[str, TopicProcessor] = {}
+        self._sink_topics: set[str] = set()
 
         @asynccontextmanager
         async def lifespan_ctx() -> AsyncIterator[None]:
@@ -173,7 +178,7 @@ class Kaflow:
                 topic_processor.param_type != param_type
                 or topic_processor.deserializer != deserializer
             ):
-                self._loop.run_until_complete(self._stop())
+                self._loop.run_until_complete(self.stop())
                 raise TypeError(
                     f"Topic '{topic}' is already registered with a different model"
                     f" and/or deserializer. TopicProcessor: {topic_processor}."
@@ -228,11 +233,6 @@ class Kaflow:
         self, topic: str, sink_topics: Sequence[str] | None = None
     ) -> Callable[[ConsumerFunc], ConsumerFunc]:
         def register_consumer(func: ConsumerFunc) -> ConsumerFunc:
-            if not asyncio.iscoroutinefunction(func):
-                raise ValueError(
-                    f"'{func.__name__}' is not a coroutine. Consumer functions must be"
-                    f" coroutines (`async def {func.__name__}`)."
-                )
             signature = inspect.signature(func)
             message_serializer_param = signature_contains_annotated_param_with(
                 MESSAGE_SERIALIZER_FLAG, signature
@@ -255,11 +255,11 @@ class Kaflow:
                 ):
                     raise ValueError(
                         f"`{signature.return_annotation}` cannot be used as a return"
-                        f" type for '{func.__name__}' consumer function. Consumers"
+                        f" type for '{func.__name__}' consumer function. Consumer"
                         " functions must return a message annotated with a serializer"
                         " like `kaflow.serializers.Json`: `async def"
-                        " process_topic(message: Json[BaseModel]) -> Json[BaseModel]:"
-                        " ...`"
+                        f" {func.__name__}(message: Json[BaseModel]) ->"
+                        " Json[BaseModel]: ...`"
                     )
                 else:
                     (
@@ -281,9 +281,59 @@ class Kaflow:
                 serializer_extra=serializer_extra,
                 sink_topics=sink_topics,
             )
+            self._sink_topics.update(sink_topics or [])
+            if is_not_coroutine_function(func):
+                func = asyncify(func)
             return func
 
         return register_consumer
+
+    def produce(self, sink_topic: str) -> Callable[[ProducerFunc], ProducerFunc]:
+        def register_producer(func: ProducerFunc) -> Callable[..., Any]:
+            signature = inspect.signature(func)
+            if not has_return_annotation(signature) or not annotated_param_with(
+                MESSAGE_SERIALIZER_FLAG, signature.return_annotation
+            ):
+                raise ValueError(
+                    f"`{signature.return_annotation}` cannot be used as a return type"
+                    f" for '{func.__name__}' consumer function. Producer functions must"
+                    " return a message annotated with a serializer like"
+                    f" `kaflow.serializers.Json`: `async def {func.__name__}() ->"
+                    " Json[BaseModel]: ...`"
+                )
+            (_, serializer, serializer_extra) = annotated_serializer_info(
+                signature.return_annotation
+            )
+            self._sink_topics.update([sink_topic])
+
+            serialize = functools.partial(
+                serializer.serialize, **serializer_extra or {}
+            )
+
+            if is_not_coroutine_function(func):
+
+                @wraps(func)
+                def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+                    r = func(*args, **kwargs)
+                    message = serialize(r)
+                    asyncio.run_coroutine_threadsafe(
+                        coro=self._publish(topic=sink_topic, value=message),
+                        loop=self._loop,
+                    )
+                    return r
+
+                return sync_wrapper
+
+            @wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                r = await func(*args, **kwargs)  # type: ignore
+                message = serialize(r)
+                await self._publish(topic=sink_topic, value=message)
+                return r
+
+            return async_wrapper
+
+        return register_producer
 
     async def _publish(self, topic: str, value: bytes) -> None:
         if not self._producer:
@@ -305,7 +355,7 @@ class Kaflow:
             topic = record.topic
             await self._topics_processors[topic].distribute(record, self._publish)
 
-    async def _start(self) -> None:
+    async def start(self) -> None:
         self._consumer = self._create_consumer()
         self._producer = self._create_producer()
 
@@ -314,7 +364,7 @@ class Kaflow:
             await self._producer.start()
             await self._consuming_loop()
 
-    async def _stop(self) -> None:
+    async def stop(self) -> None:
         if self._consumer:
             await self._consumer.stop()
         if self._producer:
@@ -322,18 +372,22 @@ class Kaflow:
 
     def run(self) -> None:
         try:
-            self._loop.run_until_complete(self._start())
+            self._loop.run_until_complete(self.start())
         except asyncio.CancelledError:
             pass
         except KeyboardInterrupt:
             pass
         finally:
-            self._loop.run_until_complete(self._stop())
+            self._loop.run_until_complete(self.stop())
             self._loop.close()
 
     @property
-    def topics(self) -> list[str]:
+    def consumed_topics(self) -> list[str]:
         return list(self._topics_processors.keys())
+
+    @property
+    def sink_topics(self) -> list[str]:
+        return list(self._sink_topics)
 
 
 # Taken from adriandg/xpresso
