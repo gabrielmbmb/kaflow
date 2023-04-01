@@ -128,7 +128,7 @@ class Kaflow:
         self._producer: AIOKafkaProducer | None = None
 
         self._topics_processors: dict[str, TopicProcessor] = {}
-        self._topics_producers: dict[str, TopicProcessor] = {}
+        self._sink_topics: set[str] = set()
 
         @asynccontextmanager
         async def lifespan_ctx() -> AsyncIterator[None]:
@@ -303,6 +303,7 @@ class Kaflow:
             (_, serializer, serializer_extra) = annotated_serializer_info(
                 signature.return_annotation
             )
+            self._sink_topics.update([sink_topic])
 
             serialize = functools.partial(
                 serializer.serialize, **serializer_extra or {}
@@ -380,8 +381,12 @@ class Kaflow:
             self._loop.close()
 
     @property
-    def topics(self) -> list[str]:
+    def consumed_topics(self) -> list[str]:
         return list(self._topics_processors.keys())
+
+    @property
+    def sink_topics(self) -> list[str]:
+        return list(self._sink_topics)
 
 
 # Taken from adriandg/xpresso
