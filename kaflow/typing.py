@@ -5,8 +5,9 @@ from typing import Awaitable, Callable, Union
 from aiokafka import ConsumerRecord
 from pydantic import BaseModel
 
-ConsumerFuncR = Union[BaseModel, None]
+TopicMessage = Union[bytes, object, BaseModel]
+ConsumerFuncR = Union[TopicMessage, None]
 ConsumerFunc = Callable[..., Union[ConsumerFuncR, Awaitable[ConsumerFuncR]]]
-ProducerFunc = Callable[..., Union[BaseModel, Awaitable[BaseModel]]]
+ProducerFunc = Callable[..., Union[TopicMessage, Awaitable[TopicMessage]]]
 ExceptionHandlerFunc = Callable[..., Union[None, Awaitable[None]]]
 DeserializationErrorHandlerFunc = Callable[[Exception, ConsumerRecord], Awaitable[None]]

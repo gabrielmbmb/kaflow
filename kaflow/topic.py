@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, Sequence
 
 from di.dependent import Dependent
 from di.executors import AsyncExecutor
 from pydantic import BaseModel
 
-from kaflow._utils.asyncio import task_group
 from kaflow.dependencies import Scopes
 from kaflow.exceptions import KaflowDeserializationException
 
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
         ConsumerFunc,
         DeserializationErrorHandlerFunc,
         ExceptionHandlerFunc,
+        TopicMessage,
     )
 
 
@@ -30,19 +31,17 @@ class TopicProcessingFunc:
         "param_type",
         "return_type",
         "serializer",
-        "serializer_extra",
         "sink_topics",
         "executor",
     )
 
     def __init__(
         self,
-        dependent: SolvedDependent[Any],
+        dependent: SolvedDependent[TopicMessage | None],
         container: Container,
-        param_type: type[BaseModel],
-        return_type: type[BaseModel] | None = None,
-        serializer: type[Serializer] | None = None,
-        serializer_extra: dict[str, Any] | None = None,
+        param_type: type[TopicMessage],
+        return_type: type[TopicMessage] | None = None,
+        serializer: Serializer | None = None,
         sink_topics: Sequence[str] | None = None,
     ) -> None:
         self.dependent = dependent
@@ -50,30 +49,29 @@ class TopicProcessingFunc:
         self.param_type = param_type
         self.return_type = return_type
         self.serializer = serializer
-        self.serializer_extra = serializer_extra or {}
         self.sink_topics = sink_topics
         self.executor = AsyncExecutor()
 
     async def _execute_dependent(
         self,
         consumer_state: ScopeState,
-        model: BaseModel,
+        message: TopicMessage,
         exception_handlers: dict[
             type[Exception], Callable[[Exception], Awaitable[Any]]
         ],
-    ) -> Any | None:
+    ) -> TopicMessage | None:
         try:
             return await self.dependent.execute_async(
                 executor=self.executor,
                 state=consumer_state,
-                values={self.param_type: model},
+                values={self.param_type: message},
             )
         except tuple(exception_handlers.keys()) as e:
             await exception_handlers[type(e)](e)
             return None
 
-    def _validate_return_type(self, return_model: BaseModel) -> None:
-        if self.return_type and not isinstance(return_model, self.return_type):
+    def _validate_message(self, message: TopicMessage) -> None:
+        if self.return_type and not isinstance(message, self.return_type):
             func_name = self.dependent.dependency.call.__name__  # type: ignore
             raise TypeError(
                 f"Return type of `{func_name}` function is not of"
@@ -82,17 +80,17 @@ class TopicProcessingFunc:
 
     def _publish_messages(
         self,
-        return_model: BaseModel,
+        message: TopicMessage,
         publish_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
     ) -> None:
-        if self.sink_topics and self.serializer and return_model:
-            message = self.serializer.serialize(return_model, **self.serializer_extra)
+        if self.sink_topics and self.serializer and message:
+            message = self.serializer.serialize(message)
             for topic in self.sink_topics:
                 asyncio.create_task(publish_fn(topic, message))
 
     async def __call__(
         self,
-        model: BaseModel,
+        message: TopicMessage,
         state: ScopeState,
         publish_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
         exception_handlers: dict[
@@ -102,47 +100,52 @@ class TopicProcessingFunc:
         async with self.container.enter_scope(
             "consumer", state=state
         ) as consumer_state:
-            return_model = await self._execute_dependent(
+            message = await self._execute_dependent(
                 consumer_state=consumer_state,
-                model=model,
+                message=message,
                 exception_handlers=exception_handlers,
             )
-        if return_model:
-            self._validate_return_type(return_model)
-            self._publish_messages(return_model=return_model, publish_fn=publish_fn)
+        if message:
+            self._validate_message(message)
+            self._publish_messages(message, publish_fn)
+
+
+class PythonObject:
+    """Dummy class to represent a Python object."""
+
+    pass
 
 
 class TopicProcessor:
     __slots__ = (
         "name",
-        "param_type",
         "deserializer",
-        "deserializer_extra",
         "container",
-        "container_state",
+        "publish_fn",
+        "exception_handlers",
+        "deserialization_error_handler",
         "funcs",
+        "container_state",
     )
 
     def __init__(
         self,
         name: str,
-        param_type: type[BaseModel],
-        deserializer: type[Serializer],
-        deserializer_extra: dict[str, Any],
         container: Container,
+        publish_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
+        exception_handlers: dict[type[Exception], ExceptionHandlerFunc],
+        deserialization_error_handler: DeserializationErrorHandlerFunc | None = None,
+        deserializer: Serializer | None = None,
     ) -> None:
         self.name = name
-        self.param_type = param_type
         self.deserializer = deserializer
-        self.deserializer_extra = deserializer_extra
         self.container = container
-        self.funcs: list[Callable[..., Coroutine[Any, Any, None]]] = []
-
-    def __repr__(self) -> str:
-        return (
-            f"TopicProcessor(name={self.name}, model={self.param_type},"
-            f" deserializer={self.deserializer})"
-        )
+        self.publish_fn = publish_fn
+        self.exception_handlers = exception_handlers
+        self.deserialization_error_handler = deserialization_error_handler
+        self.funcs: dict[
+            type[TopicMessage], list[Callable[..., Coroutine[Any, Any, None]]]
+        ] = defaultdict(list)
 
     def prepare(self, state: ScopeState) -> None:
         self.container_state = state
@@ -150,47 +153,88 @@ class TopicProcessor:
     def add_func(
         self,
         func: ConsumerFunc,
-        return_type: type[BaseModel] | None,
-        serializer: type[Serializer] | None,
-        serializer_extra: dict[str, Any] | None,
+        param_type: type[TopicMessage],
+        return_type: type[TopicMessage] | None = None,
+        serializer: Serializer | None = None,
         sink_topics: Sequence[str] | None = None,
     ) -> None:
-        self.funcs.append(
+        key: type[TopicMessage] = PythonObject
+        if param_type is bytes or (
+            hasattr(param_type, "__bases__") and BaseModel in param_type.__bases__
+        ):
+            key = param_type
+        self.funcs[key].append(
             TopicProcessingFunc(
                 dependent=self.container.solve(
                     Dependent(func, scope="consumer"), scopes=Scopes
                 ),
                 container=self.container,
-                param_type=self.param_type,
+                param_type=param_type,
                 return_type=return_type,
                 serializer=serializer,
-                serializer_extra=serializer_extra,
                 sink_topics=sink_topics,
+            )
+        )
+
+    def _create_partial_func(
+        self,
+        message: TopicMessage,
+        func: Callable[..., Coroutine[TopicMessage | None, Any, Any]],
+    ) -> asyncio.Task[TopicMessage | None]:
+        return asyncio.create_task(
+            func(
+                message=message,
+                state=self.container_state,
+                publish_fn=self.publish_fn,
+                exception_handlers=self.exception_handlers,
             )
         )
 
     async def distribute(
         self,
         record: ConsumerRecord,
-        publish_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
-        exception_handlers: dict[type[Exception], ExceptionHandlerFunc],
-        deserialization_error_handler: DeserializationErrorHandlerFunc | None = None,
     ) -> None:
-        try:
-            raw = self.deserializer.deserialize(record.value, **self.deserializer_extra)
-            model = self.param_type(**raw)
-        except Exception as e:
-            if not deserialization_error_handler:
-                raise KaflowDeserializationException(
-                    f"Failed to deserialize message from topic `{self.name}`",
-                    record=record,
-                ) from e
-            await deserialization_error_handler(e, record)
-        else:
-            await task_group(
-                self.funcs,
-                model=model,
-                state=self.container_state,
-                publish_fn=publish_fn,
-                exception_handlers=exception_handlers,
-            )
+        deserialized = None
+        if self.deserializer:
+            try:
+                deserialized = self.deserializer.deserialize(record.value)
+            except Exception as e:
+                if not self.deserialization_error_handler:
+                    raise KaflowDeserializationException(
+                        f"Failed to deserialize message from topic `{self.name}`",
+                        record=record,
+                    ) from e
+                await self.deserialization_error_handler(e, record)
+
+        tasks = []
+        for expected_type in self.funcs:
+            if expected_type is bytes:
+                tasks.extend(
+                    [
+                        self._create_partial_func(record.value, func)
+                        for func in self.funcs[expected_type]
+                    ]
+                )
+                continue
+
+            if deserialized:
+                if expected_type is PythonObject:
+                    tasks.extend(
+                        [
+                            self._create_partial_func(deserialized, func)
+                            for func in self.funcs[expected_type]
+                        ]
+                    )
+                    continue
+
+                if BaseModel in expected_type.__bases__:
+                    model = expected_type(**deserialized)
+                    tasks.extend(
+                        [
+                            self._create_partial_func(model, func)
+                            for func in self.funcs[expected_type]
+                        ]
+                    )
+                    continue
+
+        await asyncio.gather(*tasks)
