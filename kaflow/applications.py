@@ -28,7 +28,7 @@ from kaflow._utils.inspect import (
     is_not_coroutine_function,
 )
 from kaflow.dependencies import Scopes
-from kaflow.serializers import MESSAGE_SERIALIZER_FLAG
+from kaflow.serializers import MESSAGE_SERIALIZER_FLAG, _serialize
 from kaflow.topic import TopicProcessor
 from kaflow.typing import TopicMessage
 
@@ -299,9 +299,11 @@ class Kaflow:
                         " Json[BaseModel]) -> Json[BaseModel]: ...`."
                     )
                 else:
-                    (return_type, serializer_type, serializer_extra) = (
-                        get_message_param_info(signature.return_annotation)
-                    )
+                    (
+                        return_type,
+                        serializer_type,
+                        serializer_extra,
+                    ) = get_message_param_info(signature.return_annotation)
             param_type, deserializer_type, deserializer_extra = get_message_param_info(
                 message_param.annotation
             )
@@ -351,7 +353,7 @@ class Kaflow:
                 @wraps(func)
                 def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                     r = func(*args, **kwargs)
-                    message = serializer.serialize(r)
+                    message = _serialize(r, serializer)
                     asyncio.run_coroutine_threadsafe(
                         coro=self._publish(topic=sink_topic, value=message),
                         loop=self._loop,
@@ -363,7 +365,7 @@ class Kaflow:
             @wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 r = await func(*args, **kwargs)  # type: ignore
-                message = serializer.serialize(r)
+                message = _serialize(r, serializer)
                 await self._publish(topic=sink_topic, value=message)
                 return r
 
