@@ -4,8 +4,6 @@ import io
 import json
 from typing import Any, Protocol, TypeVar, cast
 
-from pydantic import BaseModel
-
 from kaflow._utils.typing import Annotated
 
 try:
@@ -24,16 +22,19 @@ except ImportError:
 
 MESSAGE_SERIALIZER_FLAG = "MessageSerializer"
 
-_BaseModelT = TypeVar("_BaseModelT", bound=BaseModel)
+T = TypeVar("T")
 
 
 class Serializer(Protocol):
-    @staticmethod
-    def serialize(data: BaseModel, **kwargs: Any) -> bytes:
+    kwargs: dict[str, Any]
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+
+    def serialize(self, data: Any) -> bytes:
         ...
 
-    @staticmethod
-    def deserialize(data: bytes, **kwargs: Any) -> Any:
+    def deserialize(self, data: bytes) -> Any:
         ...
 
     @staticmethod
@@ -42,32 +43,28 @@ class Serializer(Protocol):
 
 
 class JsonSerializer(Serializer):
-    @staticmethod
-    def serialize(data: BaseModel, **kwargs: Any) -> bytes:
-        return data.json().encode()
+    def serialize(self, data: Any) -> bytes:
+        return json.dumps(data).encode()
 
-    @staticmethod
-    def deserialize(data: bytes, **kwargs: Any) -> Any:
+    def deserialize(self, data: bytes) -> Any:
         return json.loads(data)
 
 
-Json = Annotated[_BaseModelT, JsonSerializer, MESSAGE_SERIALIZER_FLAG]
+Json = Annotated[T, JsonSerializer, MESSAGE_SERIALIZER_FLAG]
 
 
 if has_fastavro:
 
     class AvroSerializer(Serializer):
-        @staticmethod
-        def serialize(data: BaseModel, **kwargs: Any) -> bytes:
-            schema = kwargs.get("avro_schema")
+        def serialize(self, data: Any) -> bytes:
+            schema = self.kwargs.get("avro_schema")
             assert schema is not None, "avro_schema is required"
             bytes_io = io.BytesIO()
             fastavro.schemaless_writer(bytes_io, schema, data.dict())
             return bytes_io.getvalue()
 
-        @staticmethod
-        def deserialize(data: bytes, **kwargs: Any) -> Any:
-            schema = kwargs.get("avro_schema")
+        def deserialize(self, data: bytes) -> Any:
+            schema = self.kwargs.get("avro_schema")
             assert schema is not None, "avro_schema is required"
             return fastavro.schemaless_reader(io.BytesIO(data), schema)
 
@@ -75,23 +72,21 @@ if has_fastavro:
         def extra_annotations_keys() -> list[str]:
             return ["avro_schema"]
 
-    Avro = Annotated[_BaseModelT, AvroSerializer, MESSAGE_SERIALIZER_FLAG]
+    Avro = Annotated[T, AvroSerializer, MESSAGE_SERIALIZER_FLAG]
 
 if has_protobuf:
 
     class ProtobufSerializer(Serializer):
-        @staticmethod
-        def serialize(data: BaseModel, **kwargs: Any) -> bytes:
-            protobuf_schema = kwargs.get("protobuf_schema")
+        def serialize(self, data: Any) -> bytes:
+            protobuf_schema = self.kwargs.get("protobuf_schema")
             assert protobuf_schema is not None, "protobuf_schema is required"
             entity = protobuf_schema()
             for key, value in data.dict().items():
                 setattr(entity, key, value)
             return cast(bytes, entity.SerializeToString())
 
-        @staticmethod
-        def deserialize(data: bytes, **kwargs: Any) -> Any:
-            protobuf_schema = kwargs.get("protobuf_schema")
+        def deserialize(self, data: bytes) -> Any:
+            protobuf_schema = self.kwargs.get("protobuf_schema")
             assert protobuf_schema is not None, "protobuf_schema is required"
             entity = protobuf_schema()
             entity.ParseFromString(data)
@@ -101,4 +96,4 @@ if has_protobuf:
         def extra_annotations_keys() -> list[str]:
             return ["protobuf_schema"]
 
-    Protobuf = Annotated[_BaseModelT, ProtobufSerializer, MESSAGE_SERIALIZER_FLAG]
+    Protobuf = Annotated[T, ProtobufSerializer, MESSAGE_SERIALIZER_FLAG]

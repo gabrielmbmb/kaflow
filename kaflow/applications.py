@@ -27,11 +27,11 @@ from kaflow._utils.inspect import (
     annotated_param_with,
     has_return_annotation,
     is_not_coroutine_function,
-    signature_contains_annotated_param_with,
 )
 from kaflow.dependencies import Scopes
 from kaflow.serializers import MESSAGE_SERIALIZER_FLAG
 from kaflow.topic import TopicProcessor
+from kaflow.typing import TopicMessage
 
 if TYPE_CHECKING:
     from kaflow.serializers import Serializer
@@ -72,6 +72,35 @@ def annotated_serializer_info(
         extra_dict = {k: extra_metadata[k] for k in extra_annotations_keys}
         return param_type, serializer, extra_dict
     return param_type, serializer, {}
+
+
+def get_message_param_info(
+    param: Any,
+) -> tuple[type[TopicMessage], type[Serializer] | None, dict[str, Any]]:
+    if param is bytes:
+        return bytes, None, {}
+
+    return annotated_serializer_info(param)
+
+
+def bytes_or_serializer_param(signature: inspect.Signature) -> inspect.Parameter | None:
+    """Get the parameter annotated with `kaflow.serializers.MESSAGE_SERIALIZER_FLAG`
+    or of type `bytes` from a function signature.
+
+    Args:
+        signature: The function signature to get the parameter from.
+
+    Returns:
+        The parameter annotated with `kaflow.serializers.MESSAGE_SERIALIZER_FLAG` or of
+        type `bytes` from the function signature, or `None` if no such parameter is
+        found.
+    """
+    for param in signature.parameters.values():
+        if param.annotation is bytes:
+            return param
+        if annotated_param_with(MESSAGE_SERIALIZER_FLAG, param.annotation):
+            return param
+    return None
 
 
 SecurityProtocol = Literal["PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"]
@@ -174,38 +203,34 @@ class Kaflow:
         self,
         topic: str,
         func: ConsumerFunc,
-        param_type: type[BaseModel],
-        deserializer: type[Serializer],
-        deserializer_extra: dict[str, Any],
-        return_type: type[BaseModel] | None,
-        serializer: type[Serializer] | None,
-        serializer_extra: dict[str, Any] | None,
+        param_type: type[TopicMessage],
+        deserializer: Serializer | None = None,
+        return_type: type[TopicMessage] | None = None,
+        serializer: Serializer | None = None,
         sink_topics: Sequence[str] | None = None,
     ) -> None:
         topic_processor = self._topics_processors.get(topic)
-        if topic_processor:
-            if (
-                topic_processor.param_type != param_type
-                or topic_processor.deserializer != deserializer
-            ):
+        if topic_processor and deserializer:
+            if type(topic_processor.deserializer) != type(deserializer):
                 self._loop.run_until_complete(self.stop())
                 raise TypeError(
-                    f"Topic '{topic}' is already registered with a different model"
-                    f" and/or deserializer. TopicProcessor: {topic_processor}."
+                    f"Topic {topic} has already been registered with a different "
+                    f"deserializer: {topic_processor.deserializer}."
                 )
-        else:
+        if not topic_processor:
             topic_processor = TopicProcessor(
                 name=topic,
-                param_type=param_type,
-                deserializer=deserializer,
-                deserializer_extra=deserializer_extra,
                 container=self._container,
+                publish_fn=self._publish,
+                exception_handlers=self._exception_handlers,
+                deserialization_error_handler=self._deserialization_error_handler,
+                deserializer=deserializer,
             )
         topic_processor.add_func(
             func=func,
+            param_type=param_type,
             return_type=return_type,
             serializer=serializer,
-            serializer_extra=serializer_extra,
             sink_topics=sink_topics,
         )
         self._topics_processors[topic] = topic_processor
@@ -246,51 +271,56 @@ class Kaflow:
     ) -> Callable[[ConsumerFunc], ConsumerFunc]:
         def register_consumer(func: ConsumerFunc) -> ConsumerFunc:
             signature = inspect.signature(func)
-            message_serializer_param = signature_contains_annotated_param_with(
-                MESSAGE_SERIALIZER_FLAG, signature
-            )
-            if not message_serializer_param:
+            message_param = bytes_or_serializer_param(signature)
+            if not message_param:
                 raise ValueError(
-                    f"'{func.__name__}' does not have a message parameter annotated"
-                    " with a serializer like `kaflow.serializers.Json`: `async def"
-                    f" {func.__name__}(message: Json[BaseModel]) -> None: ...`"
-                    " Consumers functions must have a parameter annotated with a"
-                    " serializer like `kaflow.serializers.Json` to receive the"
-                    " messages from the topic."
+                    f"'{func.__name__}' function does not have a parameter with a type"
+                    " like `bytes` or a `pydantic.BaseModel` annotated with a"
+                    " deserializer like `kaflow.serializers.Json` to receive the"
+                    f" message from the topic: `async def  {func.__name__}(message:"
+                    " Json[BaseModel]): ...`."
                 )
             return_type: Any | None = None
-            serializer: type[Serializer] | None = None
-            serializer_extra: dict[str, Any] | None = None
+            serializer_type: type[Serializer] | None = None
+            serializer_extra: dict[str, Any] = {}
             if has_return_annotation(signature):
-                if not annotated_param_with(
-                    MESSAGE_SERIALIZER_FLAG, signature.return_annotation
+                if (
+                    not annotated_param_with(
+                        MESSAGE_SERIALIZER_FLAG, signature.return_annotation
+                    )
+                    and signature.return_annotation is not bytes
                 ):
                     raise ValueError(
-                        f"`{signature.return_annotation}` cannot be used as a return"
-                        f" type for '{func.__name__}' consumer function. Consumer"
-                        " functions must return a message annotated with a serializer"
-                        " like `kaflow.serializers.Json`: `async def"
-                        f" {func.__name__}(message: Json[BaseModel]) ->"
-                        " Json[BaseModel]: ...`"
+                        f"`{signature.return_annotation.__name__}` cannot be used as a"
+                        f" return type for '{func.__name__}' consumer function."
+                        " Consumer functions must return bytes or a"
+                        " `pydantic.BaseModel` annotated with a serializer like"
+                        " `kaflow.serializers.Json` so it can be published to the"
+                        f" `sink_topics`: `async def {func.__name__}(message:"
+                        " Json[BaseModel]) -> Json[BaseModel]: ...`."
                     )
                 else:
                     (
                         return_type,
-                        serializer,
+                        serializer_type,
                         serializer_extra,
-                    ) = annotated_serializer_info(signature.return_annotation)
-            param_type, deserializer, deserializer_extra = annotated_serializer_info(
-                message_serializer_param.annotation
+                    ) = get_message_param_info(signature.return_annotation)
+            param_type, deserializer_type, deserializer_extra = get_message_param_info(
+                message_param.annotation
             )
+            deserializer = None
+            if deserializer_type:
+                deserializer = deserializer_type(**deserializer_extra)
+            serializer = None
+            if serializer_type:
+                serializer = serializer_type(**serializer_extra)
             self._add_topic_processor(
                 topic=topic,
                 func=func,
                 param_type=param_type,
                 deserializer=deserializer,
-                deserializer_extra=deserializer_extra,
                 return_type=return_type,
                 serializer=serializer,
-                serializer_extra=serializer_extra,
                 sink_topics=sink_topics,
             )
             self._sink_topics.update(sink_topics or [])
@@ -353,6 +383,8 @@ class Kaflow:
         def register_exception_handler(
             func: ExceptionHandlerFunc,
         ) -> ExceptionHandlerFunc:
+            if is_not_coroutine_function(func):
+                func = asyncify(func)
             self._exception_handlers[exception] = func
             return func
 
@@ -386,12 +418,7 @@ class Kaflow:
                 " called yet."
             )
         async for record in self._consumer:
-            await self._topics_processors[record.topic].distribute(
-                record=record,
-                publish_fn=self._publish,
-                exception_handlers=self._exception_handlers,
-                deserialization_error_handler=self._deserialization_error_handler,
-            )
+            await self._topics_processors[record.topic].distribute(record=record)
 
     async def start(self) -> None:
         self._consumer = self._create_consumer()
