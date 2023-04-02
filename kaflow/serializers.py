@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import io
 import json
-from typing import Any, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
+
+from pydantic import BaseModel
 
 from kaflow._utils.typing import Annotated
+
+if TYPE_CHECKING:
+    from kaflow.typing import TopicMessage
 
 try:
     import fastavro
@@ -23,6 +28,12 @@ except ImportError:
 MESSAGE_SERIALIZER_FLAG = "MessageSerializer"
 
 T = TypeVar("T")
+
+
+def _serialize(message: TopicMessage, serializer: Serializer) -> bytes:
+    if isinstance(message, BaseModel):
+        message = message.dict()
+    return serializer.serialize(message)
 
 
 class Serializer(Protocol):
@@ -60,7 +71,7 @@ if has_fastavro:
             schema = self.kwargs.get("avro_schema")
             assert schema is not None, "avro_schema is required"
             bytes_io = io.BytesIO()
-            fastavro.schemaless_writer(bytes_io, schema, data.dict())
+            fastavro.schemaless_writer(bytes_io, schema, data)
             return bytes_io.getvalue()
 
         def deserialize(self, data: bytes) -> Any:
@@ -81,7 +92,7 @@ if has_protobuf:
             protobuf_schema = self.kwargs.get("protobuf_schema")
             assert protobuf_schema is not None, "protobuf_schema is required"
             entity = protobuf_schema()
-            for key, value in data.dict().items():
+            for key, value in data.items():
                 setattr(entity, key, value)
             return cast(bytes, entity.SerializeToString())
 

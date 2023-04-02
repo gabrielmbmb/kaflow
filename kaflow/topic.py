@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from kaflow.dependencies import Scopes
 from kaflow.exceptions import KaflowDeserializationException
+from kaflow.serializers import _serialize
 
 if TYPE_CHECKING:
     from aiokafka import ConsumerRecord
@@ -84,7 +85,7 @@ class TopicProcessingFunc:
         publish_fn: Callable[[str, bytes], Coroutine[Any, Any, None]],
     ) -> None:
         if self.sink_topics and self.serializer and message:
-            message = self.serializer.serialize(message)
+            message = _serialize(message, self.serializer)
             for topic in self.sink_topics:
                 asyncio.create_task(publish_fn(topic, message))
 
