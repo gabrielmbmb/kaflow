@@ -1,7 +1,12 @@
 <div align="center">
   <h1>kaflow</h1>
   <p>
-    <em>Kafka streams processing in Python.</em>
+    <em>Kafka streams topic processing in Python.</em>
+  </p>
+  <p>
+    <a href="https://github.com/gabrielmbmb/kaflow/actions?query=workflow%3ATest+event%3Apush+branch%3Amain" target="_blank">
+      <img src="https://github.com/gabrielmbmb/kaflow/workflows/Test/badge.svg?event=push&branch=main" alt="Test">
+    </a>
   </p>
 </div>
 
@@ -17,7 +22,7 @@ Some of the features offered by `kaflow`:
 
 ## Requirements
 
-Python 3.7+
+Python 3.8+
 
 ## Installation
 
@@ -42,7 +47,7 @@ app = Kaflow(name="AwesomeKakfaApp", brokers="localhost:9092")
 
 
 @app.consume(topic="user_clicks", sink_topics=("user_clicks_json",))
-def consume_user_clicks(message: bytes) -> Json[UserClick]:
+async def consume_user_clicks(message: bytes) -> Json[UserClick]:
     print("user click", message)
     return message
 
