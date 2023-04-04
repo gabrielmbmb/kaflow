@@ -17,16 +17,6 @@ def annotated_param_with(item: Any, param: Any) -> bool:
     return is_annotated_param(param) and item in get_args(param)
 
 
-def signature_contains_annotated_param_with(
-    item: Any, signature: Signature
-) -> inspect.Parameter | None:
-    for param in signature.parameters.values():
-        if annotated_param_with(item, param.annotation):
-            if item in param.annotation.__metadata__:
-                return param
-    return None
-
-
 def has_return_annotation(signature: Signature) -> bool:
     return (
         signature.return_annotation is not None
