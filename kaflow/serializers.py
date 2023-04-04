@@ -37,11 +37,6 @@ def _serialize(message: TopicMessage, serializer: Serializer) -> bytes:
 
 
 class Serializer(Protocol):
-    kwargs: dict[str, Any]
-
-    def __init__(self, **kwargs: Any) -> None:
-        self.kwargs = kwargs
-
     def serialize(self, data: Any) -> bytes:
         ...
 
@@ -54,6 +49,9 @@ class Serializer(Protocol):
 
 
 class JsonSerializer(Serializer):
+    def __init__(self, **kwargs: Any) -> None:
+        pass
+
     def serialize(self, data: Any) -> bytes:
         return json.dumps(data).encode()
 
@@ -67,17 +65,16 @@ Json = Annotated[T, JsonSerializer, MESSAGE_SERIALIZER_FLAG]
 if has_fastavro:
 
     class AvroSerializer(Serializer):
+        def __init__(self, avro_schema: dict[str, Any], **kwargs: Any) -> None:
+            self.avro_schema = avro_schema
+
         def serialize(self, data: Any) -> bytes:
-            schema = self.kwargs.get("avro_schema")
-            assert schema is not None, "avro_schema is required"
             bytes_io = io.BytesIO()
-            fastavro.schemaless_writer(bytes_io, schema, data)
+            fastavro.schemaless_writer(bytes_io, self.avro_schema, data)
             return bytes_io.getvalue()
 
         def deserialize(self, data: bytes) -> Any:
-            schema = self.kwargs.get("avro_schema")
-            assert schema is not None, "avro_schema is required"
-            return fastavro.schemaless_reader(io.BytesIO(data), schema)
+            return fastavro.schemaless_reader(io.BytesIO(data), self.avro_schema)
 
         @staticmethod
         def extra_annotations_keys() -> list[str]:
@@ -88,18 +85,17 @@ if has_fastavro:
 if has_protobuf:
 
     class ProtobufSerializer(Serializer):
+        def __init__(self, protobuf_schema: type[Any], **kwargs: Any) -> None:
+            self.protobuf_schema = protobuf_schema
+
         def serialize(self, data: Any) -> bytes:
-            protobuf_schema = self.kwargs.get("protobuf_schema")
-            assert protobuf_schema is not None, "protobuf_schema is required"
-            entity = protobuf_schema()
+            entity = self.protobuf_schema()
             for key, value in data.items():
                 setattr(entity, key, value)
             return cast(bytes, entity.SerializeToString())
 
         def deserialize(self, data: bytes) -> Any:
-            protobuf_schema = self.kwargs.get("protobuf_schema")
-            assert protobuf_schema is not None, "protobuf_schema is required"
-            entity = protobuf_schema()
+            entity = self.protobuf_schema()
             entity.ParseFromString(data)
             return json_format.MessageToDict(entity)
 
