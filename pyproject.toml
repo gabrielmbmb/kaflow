@@ -68,11 +68,13 @@ ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["kaflow"]
-parallel = true
+# parallel = true
 branch = true
 context = '${CONTEXT}'
 
 [tool.coverage.report]
 exclude_lines = [
   '\(Protocol\):$',
+  'if TYPE_CHECKING:',
+  'except ImportError:'
 ]
