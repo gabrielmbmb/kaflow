@@ -13,4 +13,4 @@ if has_protobuf:
 
     __all__.append("Protobuf")
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
