@@ -47,7 +47,7 @@ app = Kaflow(name="AwesomeKakfaApp", brokers="localhost:9092")
 
 
 @app.consume(topic="user_clicks", sink_topics=("user_clicks_json",))
-async def consume_user_clicks(message: bytes) -> Json[UserClick]:
+async def consume_user_clicks(message: Json[UserClick]) -> Json[UserClick]:
     print("user click", message)
     return message
 
