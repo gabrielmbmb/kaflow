@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from functools import wraps
 from typing import (
@@ -27,12 +28,14 @@ from kaflow._utils.inspect import (
     has_return_annotation,
     is_not_coroutine_function,
 )
+from kaflow.asyncapi._builder import build_asyncapi
 from kaflow.dependencies import Scopes
 from kaflow.serializers import MESSAGE_SERIALIZER_FLAG, _serialize
 from kaflow.topic import TopicProcessor
 from kaflow.typing import TopicMessage
 
 if TYPE_CHECKING:
+    from kaflow.asyncapi.models import AsyncAPI
     from kaflow.serializers import Serializer
     from kaflow.typing import (
         ConsumerFunc,
@@ -112,7 +115,7 @@ AutoOffsetReset = Literal["earliest", "latest", "none"]
 class Kaflow:
     def __init__(
         self,
-        name: str,
+        client_id: str,
         brokers: str | list[str],
         group_id: str | None = None,
         security_protocol: SecurityProtocol = "PLAINTEXT",
@@ -129,8 +132,16 @@ class Kaflow:
         auto_commit: bool = True,
         auto_commit_interval_ms: int = 5000,
         lifespan: Callable[..., AsyncContextManager[None]] | None = None,
+        asyncapi_version: str = "2.6.0",
+        title: str = "Kaflow",
+        version: str = "0.0.1",
+        description: str | None = None,
+        terms_of_service: str | None = None,
+        contact: dict[str, str | Any] = None,
+        license_info: dict[str, str | Any] = None,
     ) -> None:
-        self.name = name
+        # AIOKafka
+        self.client_id = client_id
         self.brokers = brokers
         self.group_id = group_id
         self.security_protocol = security_protocol
@@ -153,6 +164,16 @@ class Kaflow:
         else:
             self.ssl_context = None
 
+        # AsyncAPI
+        self.asyncapi_version = asyncapi_version
+        self.title = title
+        self.version = version
+        self.description = description
+        self.terms_of_service = terms_of_service
+        self.contact = contact
+        self.license_info = license_info
+        self.asyncapi_schema: AsyncAPI | None = None
+
         self._container = Container()
         self._container_state = ScopeState()
 
@@ -161,6 +182,7 @@ class Kaflow:
         self._producer: AIOKafkaProducer | None = None
 
         self._topics_processors: dict[str, TopicProcessor] = {}
+        self._producers: dict[str, list[ProducerFunc]] = defaultdict(list)
         self._sink_topics: set[str] = set()
 
         self._exception_handlers: dict[type[Exception], ExceptionHandlerFunc] = {}
@@ -239,7 +261,7 @@ class Kaflow:
             *self._topics_processors.keys(),
             loop=self._loop,
             bootstrap_servers=self.brokers,
-            client_id=self.name,
+            client_id=self.client_id,
             group_id=self.group_id,
             ssl_context=self.ssl_context,
             security_protocol=self.security_protocol,
@@ -255,7 +277,7 @@ class Kaflow:
         return AIOKafkaProducer(
             loop=self._loop,
             bootstrap_servers=self.brokers,
-            client_id=self.name,
+            client_id=self.client_id,
             ssl_context=self.ssl_context,
             security_protocol=self.security_protocol,
             sasl_mechanism=self.sasl_mechanism,
@@ -346,6 +368,7 @@ class Kaflow:
                 signature.return_annotation
             )
             serializer = serializer_type(**serializer_extra)
+            self._producers[func].append(func)
             self._sink_topics.update([sink_topic])
 
             if is_not_coroutine_function(func):
@@ -396,6 +419,21 @@ class Kaflow:
             return func
 
         return register_deserialization_error_handler
+
+    def asyncapi(self) -> AsyncAPI:
+        if not self.asyncapi_schema:
+            self.asyncapi_schema = build_asyncapi(
+                asyncapi_version=self.asyncapi_version,
+                title=self.title,
+                version=self.version,
+                description=self.description,
+                terms_of_service=self.terms_of_service,
+                contact=self.contact,
+                license_info=self.license_info,
+                topic_processors=self._topics_processors,
+                producers=self._producers,
+            )
+        return self.asyncapi_schema
 
     async def _publish(self, topic: str, value: bytes) -> None:
         if not self._producer:
