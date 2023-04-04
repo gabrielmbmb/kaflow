@@ -71,3 +71,8 @@ source = ["kaflow"]
 parallel = true
 branch = true
 context = '${CONTEXT}'
+
+[tool.coverage.report]
+exclude_lines = [
+  '\(Protocol\):$',
+]
