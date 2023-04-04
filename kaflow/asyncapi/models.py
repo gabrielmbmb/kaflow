@@ -37,12 +37,12 @@ class Binding(BaseModel):
 
 
 class Server(BaseModel):
-    url: AnyUrl
+    url: str
     protocol: str
     protocolVersion: Optional[str] = None
     description: Optional[str] = None
     variables: Optional[Dict[str, ServerVariable]] = None
-    security: Optional[Dict[str, List[str]]] = None
+    security: Optional[List[Dict[str, Any]]] = None
     bindings: Optional[Dict[str, Binding]] = None
 
 
@@ -127,7 +127,7 @@ class Schema(BaseModel):
 
 class Parameter(BaseModel):
     description: Optional[str] = None
-    schema: Optional[Schema] = None
+    schema_: Optional[Schema] = Field(None, alias="schema")
     location: Optional[str] = None
 
 
@@ -173,7 +173,7 @@ class SecurityScheme(BaseModel):
     pass
 
 
-class Component(BaseModel):
+class Components(BaseModel):
     schemas: Optional[Dict[str, Schema]] = None
     messages: Optional[Dict[str, Union[Message, Reference]]] = None
     securitySchemes: Optional[Dict[str, Union[SecurityScheme, Reference]]] = None
@@ -198,6 +198,6 @@ class AsyncAPI(BaseModel):
     info: Info
     servers: Optional[Dict[str, Server]] = None
     channels: Dict[str, Channel] = {}
-    components: Optional[List[Component]] = None
-    tag: List[Tag]
-    externalDocs: ExternalDocs
+    components: Optional[Components] = None
+    tags: Optional[List[Tag]] = None
+    externalDocs: Optional[ExternalDocs] = None
