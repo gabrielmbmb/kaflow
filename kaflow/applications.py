@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from functools import wraps
 from typing import (
@@ -9,6 +10,7 @@ from typing import (
     Any,
     AsyncContextManager,
     AsyncIterator,
+    Awaitable,
     Callable,
     Literal,
     Sequence,
@@ -29,7 +31,7 @@ from kaflow._utils.inspect import (
 )
 from kaflow.dependencies import Scopes
 from kaflow.serializers import MESSAGE_SERIALIZER_FLAG, _serialize
-from kaflow.topic import TopicProcessor
+from kaflow.topic import TopicProcessingFunc
 from kaflow.typing import TopicMessage
 
 if TYPE_CHECKING:
@@ -160,10 +162,13 @@ class Kaflow:
         self._consumer: AIOKafkaConsumer | None = None
         self._producer: AIOKafkaProducer | None = None
 
-        self._topics_processors: dict[str, TopicProcessor] = {}
+        self._consumers: dict[str, TopicProcessingFunc] = {}
+        self._producers: dict[str, list[ProducerFunc]] = defaultdict(list)
         self._sink_topics: set[str] = set()
 
-        self._exception_handlers: dict[type[Exception], ExceptionHandlerFunc] = {}
+        self._exception_handlers: dict[
+            type[Exception], Callable[..., Awaitable[None]]
+        ] = {}
         self._deserialization_error_handler: DeserializationErrorHandlerFunc | None = (
             None
         )
@@ -195,7 +200,7 @@ class Kaflow:
         self.lifespan = lifespan_ctx
 
     def _prepare(self) -> None:
-        for topic_processor in self._topics_processors.values():
+        for topic_processor in self._consumers.values():
             topic_processor.prepare(self._container_state)
 
     def _add_topic_processor(
@@ -208,35 +213,24 @@ class Kaflow:
         serializer: Serializer | None = None,
         sink_topics: Sequence[str] | None = None,
     ) -> None:
-        topic_processor = self._topics_processors.get(topic)
-        if topic_processor and deserializer:
-            if type(topic_processor.deserializer) != type(deserializer):
-                self._loop.run_until_complete(self.stop())
-                raise TypeError(
-                    f"Topic {topic} has already been registered with a different "
-                    f"deserializer: {topic_processor.deserializer}."
-                )
-        if not topic_processor:
-            topic_processor = TopicProcessor(
-                name=topic,
-                container=self._container,
-                publish_fn=self._publish,
-                exception_handlers=self._exception_handlers,
-                deserialization_error_handler=self._deserialization_error_handler,
-                deserializer=deserializer,
-            )
-        topic_processor.add_func(
+        topic_processor = TopicProcessingFunc(
+            name=topic,
+            container=self._container,
+            publish_fn=self._publish,
+            exception_handlers=self._exception_handlers,
+            deserialization_error_handler=self._deserialization_error_handler,
             func=func,
             param_type=param_type,
+            deserializer=deserializer,
             return_type=return_type,
             serializer=serializer,
             sink_topics=sink_topics,
         )
-        self._topics_processors[topic] = topic_processor
+        self._consumers[topic] = topic_processor
 
     def _create_consumer(self) -> AIOKafkaConsumer:
         return AIOKafkaConsumer(
-            *self._topics_processors.keys(),
+            *self._consumers.keys(),
             loop=self._loop,
             bootstrap_servers=self.brokers,
             client_id=self.name,
@@ -414,7 +408,7 @@ class Kaflow:
                 " called yet."
             )
         async for record in self._consumer:
-            await self._topics_processors[record.topic].distribute(record=record)
+            await self._consumers[record.topic].consume(record=record)
 
     async def start(self) -> None:
         self._consumer = self._create_consumer()
@@ -444,7 +438,7 @@ class Kaflow:
 
     @property
     def consumed_topics(self) -> list[str]:
-        return list(self._topics_processors.keys())
+        return list(self._consumers.keys())
 
     @property
     def sink_topics(self) -> list[str]:
