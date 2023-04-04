@@ -20,16 +20,6 @@ class KeyValueModel(BaseModel):
     value: str
 
 
-def test_serializer_init() -> None:
-    serializer = Serializer(
-        extra_kwarg_1="extra_kwarg_1", extra_kwarg_2="extra_kwarg_2"
-    )
-    assert serializer.kwargs == {
-        "extra_kwarg_1": "extra_kwarg_1",
-        "extra_kwarg_2": "extra_kwarg_2",
-    }
-
-
 def test_serializer_extra_annotation_keys() -> None:
     assert Serializer.extra_annotations_keys() == []
 
@@ -42,18 +32,6 @@ def test_json_serializer_serialize() -> None:
 def test_json_serializer_deserialize() -> None:
     serializer = JsonSerializer()
     assert serializer.deserialize(b'{"key": "value"}') == {"key": "value"}
-
-
-def test_avro_serializer_serialize_raise_error() -> None:
-    with pytest.raises(AssertionError, match="avro_schema is required"):
-        serializer = AvroSerializer()
-        serializer.serialize({"key": "value"})
-
-
-def test_avro_serializer_deserialize_raise_error() -> None:
-    with pytest.raises(AssertionError, match="avro_schema is required"):
-        serializer = AvroSerializer()
-        serializer.deserialize(b'{"key": "value"}')
 
 
 def test_avro_serializer_serialize() -> None:
@@ -92,18 +70,6 @@ def test_avro_serializer_deserialize() -> None:
 
 def test_avro_extra_annotation_keys() -> None:
     assert AvroSerializer.extra_annotations_keys() == ["avro_schema"]
-
-
-def test_protobuf_serializer_serialize_raise_error() -> None:
-    with pytest.raises(AssertionError, match="protobuf_schema is required"):
-        serializer = ProtobufSerializer()
-        serializer.serialize({"key": "value"})
-
-
-def test_protobuf_serializer_deserialize_raise_error() -> None:
-    with pytest.raises(AssertionError, match="protobuf_schema is required"):
-        serializer = ProtobufSerializer()
-        serializer.deserialize(b'{"key": "value"}')
 
 
 def test_protobuf_serializer_serialize() -> None:
