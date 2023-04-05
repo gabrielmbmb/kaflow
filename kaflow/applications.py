@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from kaflow.serializers import Serializer
     from kaflow.typing import TopicValueKeyHeader
 
-ConsumerFunc = Callable[..., Union[Message, Awaitable[Message | None], None]]
+ConsumerFunc = Callable[..., Union[Message, Awaitable[Union[Message, None]], None]]
 ProducerFunc = Callable[..., Union[Message, Awaitable[Message]]]
 ExceptionHandlerFunc = Callable[[Exception], Awaitable]
 DeserializationErrorHandlerFunc = Callable[[Exception, ConsumerRecord], Awaitable[None]]
