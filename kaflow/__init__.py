@@ -1,7 +1,4 @@
-from kaflow.applications import Kaflow
-from kaflow.dependencies import Depends
-from kaflow.message import Message
-from kaflow.parameters import (
+from kaflow._parameters import (
     FromHeader,
     FromKey,
     FromValue,
@@ -9,6 +6,9 @@ from kaflow.parameters import (
     MessagePartition,
     MessageTimestamp,
 )
+from kaflow.applications import Kaflow
+from kaflow.dependencies import Depends
+from kaflow.message import Message
 from kaflow.serializers import Json, has_fastavro, has_protobuf
 
 __all__ = [
