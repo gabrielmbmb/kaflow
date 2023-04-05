@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import io
 import json
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pydantic import BaseModel
 
 from kaflow._utils.typing import Annotated
 
 if TYPE_CHECKING:
-    from kaflow.typing import TopicMessage
+    from kaflow.typing import TopicValueKeyHeader
 
 try:
     import fastavro
@@ -30,16 +31,18 @@ MESSAGE_SERIALIZER_FLAG = "MessageSerializer"
 T = TypeVar("T")
 
 
-def _serialize(message: TopicMessage, serializer: Serializer) -> bytes:
+def _serialize(message: TopicValueKeyHeader, serializer: Serializer) -> bytes:
     if isinstance(message, BaseModel):
         message = message.dict()
     return serializer.serialize(message)
 
 
-class Serializer(Protocol):
+class Serializer(ABC):
+    @abstractmethod
     def serialize(self, data: Any) -> bytes:
         ...
 
+    @abstractmethod
     def deserialize(self, data: bytes) -> Any:
         ...
 
