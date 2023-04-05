@@ -16,7 +16,7 @@ def is_annotated_param(param: Any) -> bool:
 def annotated_param_with(item: Any, param: Any) -> bool:
     if is_annotated_param(param):
         for arg in get_args(param):
-            if arg == item or isinstance(arg, item):
+            if arg == item or (type(item) == type and isinstance(arg, item)):
                 return True
     return False
 
