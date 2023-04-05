@@ -5,7 +5,7 @@ import contextvars
 import functools
 from typing import Awaitable, Callable, TypeVar
 
-from kaflow._utils.typing import ParamSpec
+from typing_extensions import ParamSpec
 
 P = ParamSpec("P")
 R = TypeVar("R")
