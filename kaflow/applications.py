@@ -24,7 +24,7 @@ from di import Container, ScopeState
 from di.dependent import Dependent
 from di.executors import AsyncExecutor
 
-from kaflow import _parameters
+from kaflow import parameters
 from kaflow._consumer import TopicConsumerFunc
 from kaflow._utils.asyncio import asyncify
 from kaflow._utils.inspect import is_not_coroutine_function
@@ -231,7 +231,7 @@ class Kaflow:
                 key_param_type,
                 key_deserializer,
                 headers_type_deserializers,
-            ) = _parameters.get_function_parameters_info(func)
+            ) = parameters.get_function_parameters_info(func)
             self._add_topic_consumer_func(
                 topic=topic,
                 func=func,
