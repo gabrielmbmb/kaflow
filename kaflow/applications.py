@@ -24,12 +24,13 @@ from di import Container, ScopeState
 from di.dependent import Dependent
 from di.executors import AsyncExecutor
 
-from kaflow import parameters
+from kaflow import _parameters
+from kaflow._consumer import TopicConsumerFunc
 from kaflow._utils.asyncio import asyncify
 from kaflow._utils.inspect import is_not_coroutine_function
+from kaflow.asyncapi._builder import build_asyncapi
 from kaflow.dependencies import Scopes
 from kaflow.message import Message
-from kaflow.topic import TopicConsumerFunc
 
 if TYPE_CHECKING:
     from kaflow.asyncapi.models import AsyncAPI
@@ -230,7 +231,7 @@ class Kaflow:
                 key_param_type,
                 key_deserializer,
                 headers_type_deserializers,
-            ) = parameters.get_function_parameters_info(func)
+            ) = _parameters.get_function_parameters_info(func)
             self._add_topic_consumer_func(
                 topic=topic,
                 func=func,
@@ -311,6 +312,21 @@ class Kaflow:
             return func
 
         return register_deserialization_error_handler
+
+    def asyncapi(self) -> AsyncAPI:
+        if not self.asyncapi_schema:
+            self.asyncapi_schema = build_asyncapi(
+                asyncapi_version=self.asyncapi_version,
+                title=self.title,
+                version=self.version,
+                description=self.description,
+                terms_of_service=self.terms_of_service,
+                contact=self.contact,
+                license_info=self.license_info,
+                consumers=self._consumers,
+                producers=self._producers,
+            )
+        return self.asyncapi_schema
 
     async def _publish(
         self,

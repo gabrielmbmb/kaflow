@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any
 from kaflow.asyncapi import models
 
 if TYPE_CHECKING:
-    from kaflow.topic import TopicProcessor
-    from kaflow.typing import ProducerFunc
+    from kaflow._consumer import TopicConsumerFunc
+    from kaflow.applications import ProducerFunc
 
 
 def build_asyncapi(
@@ -18,7 +18,7 @@ def build_asyncapi(
     terms_of_service: str | None = None,
     contact: dict[str, Any] | None = None,
     license_info: dict[str, Any] | None = None,
-    topic_processors: dict[str, TopicProcessor],
+    consumers: dict[str, TopicConsumerFunc],
     producers: dict[str, list[ProducerFunc]],
 ) -> models.AsyncAPI:
     asyncapi_info = {"title": title, "version": version}
