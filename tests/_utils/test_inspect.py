@@ -35,15 +35,20 @@ def test_is_annotated_param_true(param: Any, expected: bool) -> None:
     assert is_annotated_param(param) == expected
 
 
+class DummyUnitTest:
+    pass
+
+
 @pytest.mark.parametrize(
-    "param, expected",
+    "param, annotated_with, expected",
     [
-        (Annotated[int, "magic_unit_test_flag"], True),
-        (Annotated[int, "extra", "metadata"], False),
+        (Annotated[int, "magic_unit_test_flag"], "magic_unit_test_flag", True),
+        (Annotated[int, "extra", "metadata"], "magic_unit_test_flag", False),
+        (Annotated[int, DummyUnitTest()], DummyUnitTest, True),
     ],
 )
-def test_annotated_param_with(param: Any, expected: bool) -> None:
-    assert annotated_param_with("magic_unit_test_flag", param) == expected
+def test_annotated_param_with(param: Any, annotated_with: Any, expected: bool) -> None:
+    assert annotated_param_with(annotated_with, param) == expected
 
 
 @pytest.mark.parametrize(
