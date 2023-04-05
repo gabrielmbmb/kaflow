@@ -7,6 +7,12 @@
     <a href="https://github.com/gabrielmbmb/kaflow/actions?query=workflow%3ATest+event%3Apush+branch%3Amain" target="_blank">
       <img src="https://github.com/gabrielmbmb/kaflow/workflows/Test/badge.svg?event=push&branch=main" alt="Test">
     </a>
+    <a href="https://pypi.org/project/kaflow">
+      <img src="https://img.shields.io/pypi/v/kaflow?color=#2cbe4e">
+    </a>
+    <a href="https://pypi.org/project/kaflow">
+      <img src="https://img.shields.io/pypi/pyversions/kaflow?color=#2cbe4e">
+    </a>
   </p>
 </div>
 
@@ -47,7 +53,7 @@ app = Kaflow(name="AwesomeKakfaApp", brokers="localhost:9092")
 
 
 @app.consume(topic="user_clicks", sink_topics=("user_clicks_json",))
-async def consume_user_clicks(message: bytes) -> Json[UserClick]:
+async def consume_user_clicks(message: Json[UserClick]) -> Json[UserClick]:
     print("user click", message)
     return message
 

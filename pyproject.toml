@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "kaflow"
 description = "Python Stream processing backed by Apache Kafka."
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 license = "MIT"
 keywords = ["kafka", "stream", "processing", "data", "pipeline", "flow"]
 authors = [
@@ -27,6 +27,7 @@ dependencies = [
   "pydantic >=1.10.0,<2.0.0",
   "aiokafka >=0.8.0",
   "di[anyio] ==0.75.2",
+  "typing-extensions >=4.5.0"
 ]
 dynamic = ["version"]
 
@@ -68,6 +69,13 @@ ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["kaflow"]
-parallel = true
+# parallel = true
 branch = true
 context = '${CONTEXT}'
+
+[tool.coverage.report]
+exclude_lines = [
+  '\(Protocol\):$',
+  'if TYPE_CHECKING:',
+  'except ImportError:'
+]

@@ -33,7 +33,7 @@ jobs:
         id: cache
         with:
           path: ${{ env.pythonLocation }}
-          key: ${{ runner.os }}-python-${{ env.PythonLocation }}-${{ hashFiles('pyproject.toml') }}-test-v03
+          key: ${{ runner.os }}-python-${{ env.PythonLocation }}-${{ hashFiles('pyproject.toml') }}-test
 
       - name: Install dependencies
         if: steps.cache.outputs.cache-hit != 'true'
