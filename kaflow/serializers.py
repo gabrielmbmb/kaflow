@@ -6,8 +6,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from pydantic import BaseModel
-
-from kaflow._utils.typing import Annotated
+from typing_extensions import Annotated
 
 if TYPE_CHECKING:
     from kaflow.typing import TopicValueKeyHeader

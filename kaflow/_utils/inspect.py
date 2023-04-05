@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar
 
-from kaflow._utils.typing import Annotated, ParamSpec, TypeGuard, get_args, get_origin
+from typing_extensions import Annotated, ParamSpec, TypeGuard, get_args, get_origin
 
 if TYPE_CHECKING:
     from inspect import Signature

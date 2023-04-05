@@ -2,6 +2,7 @@ import inspect
 from typing import Any, Callable
 
 import pytest
+from typing_extensions import Annotated
 
 from kaflow._utils.inspect import (
     annotated_param_with,
@@ -9,7 +10,6 @@ from kaflow._utils.inspect import (
     is_annotated_param,
     is_not_coroutine_function,
 )
-from kaflow._utils.typing import Annotated
 
 
 def func_with_none_return_annotation() -> None:
