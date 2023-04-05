@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "kaflow"
 description = "Python Stream processing backed by Apache Kafka."
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 license = "MIT"
 keywords = ["kafka", "stream", "processing", "data", "pipeline", "flow"]
 authors = [
