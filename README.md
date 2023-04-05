@@ -8,10 +8,10 @@
       <img src="https://github.com/gabrielmbmb/kaflow/workflows/Test/badge.svg?event=push&branch=main" alt="Test">
     </a>
     <a href="https://pypi.org/project/kaflow">
-      <img src="https://img.shields.io/pypi/v/kaflow?color=g">
+      <img src="https://img.shields.io/pypi/v/kaflow?color=#2cbe4e">
     </a>
     <a href="https://pypi.org/project/kaflow">
-      <img src="https://img.shields.io/pypi/pyversions/kaflow?color=g">
+      <img src="https://img.shields.io/pypi/pyversions/kaflow?color=#2cbe4e">
     </a>
   </p>
 </div>
