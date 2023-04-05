@@ -1,4 +1,5 @@
 from kaflow.applications import Kaflow
+from kaflow.dependencies import Depends
 from kaflow.message import Message
 from kaflow.parameters import (
     FromHeader,
@@ -12,6 +13,7 @@ from kaflow.serializers import Json, has_fastavro, has_protobuf
 
 __all__ = [
     "Kaflow",
+    "Depends",
     "Message",
     "FromHeader",
     "FromKey",

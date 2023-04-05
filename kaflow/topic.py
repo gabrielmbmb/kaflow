@@ -37,7 +37,7 @@ def _deserialize(
     return value
 
 
-class TopicProcessingFunc:
+class TopicConsumerFunc:
     __slots__ = (
         "name",
         "container",

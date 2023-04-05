@@ -29,7 +29,7 @@ from kaflow._utils.asyncio import asyncify
 from kaflow._utils.inspect import is_not_coroutine_function
 from kaflow.dependencies import Scopes
 from kaflow.message import Message
-from kaflow.topic import TopicProcessingFunc
+from kaflow.topic import TopicConsumerFunc
 
 if TYPE_CHECKING:
     from kaflow.serializers import Serializer
@@ -99,7 +99,7 @@ class Kaflow:
         self._consumer: AIOKafkaConsumer | None = None
         self._producer: AIOKafkaProducer | None = None
 
-        self._consumers: dict[str, TopicProcessingFunc] = {}
+        self._consumers: dict[str, TopicConsumerFunc] = {}
         self._producers: dict[str, list[ProducerFunc]] = defaultdict(list)
         self._sink_topics: set[str] = set()
 
@@ -140,7 +140,7 @@ class Kaflow:
         for topic_processor in self._consumers.values():
             topic_processor.prepare(self._container_state)
 
-    def _add_topic_processing_func(
+    def _add_topic_consumer_func(
         self,
         topic: str,
         func: ConsumerFunc,
@@ -154,7 +154,7 @@ class Kaflow:
         | None = None,
         sink_topics: Sequence[str] | None = None,
     ) -> None:
-        topic_processor = TopicProcessingFunc(
+        topic_processor = TopicConsumerFunc(
             name=topic,
             container=self._container,
             publish_fn=self._publish,
@@ -212,7 +212,7 @@ class Kaflow:
                 key_deserializer,
                 headers_type_deserializers,
             ) = parameters.get_function_parameters_info(func)
-            self._add_topic_processing_func(
+            self._add_topic_consumer_func(
                 topic=topic,
                 func=func,
                 value_param_type=value_param_type,
