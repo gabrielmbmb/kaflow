@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
-import pytest
 from pydantic import BaseModel
 
 from kaflow.serializers import (
@@ -10,7 +7,6 @@ from kaflow.serializers import (
     JsonSerializer,
     ProtobufSerializer,
     Serializer,
-    _serialize,
 )
 from tests.key_value_pb2 import KeyValue
 
@@ -90,18 +86,3 @@ def test_protobuf_serializer_deserialize() -> None:
 
 def test_protobuf_extra_annotation_keys() -> None:
     assert ProtobufSerializer.extra_annotations_keys() == ["protobuf_schema"]
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        {"key": "unit_test_key", "value": "unit_test_value"},
-        KeyValueModel(key="unit_test_key", value="unit_test_value"),
-    ],
-)
-def test__serialize(message: dict[str, Any] | BaseModel) -> None:
-    serializer = JsonSerializer()
-    assert (
-        _serialize(serializer=serializer, message=message)
-        == b'{"key": "unit_test_key", "value": "unit_test_value"}'
-    )

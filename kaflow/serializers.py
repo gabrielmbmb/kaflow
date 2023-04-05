@@ -5,11 +5,10 @@ import json
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from pydantic import BaseModel
 from typing_extensions import Annotated
 
 if TYPE_CHECKING:
-    from kaflow.typing import TopicValueKeyHeader
+    pass
 
 try:
     import fastavro
@@ -28,12 +27,6 @@ except ImportError:
 MESSAGE_SERIALIZER_FLAG = "MessageSerializer"
 
 T = TypeVar("T")
-
-
-def _serialize(message: TopicValueKeyHeader, serializer: Serializer) -> bytes:
-    if isinstance(message, BaseModel):
-        message = message.dict()
-    return serializer.serialize(message)
 
 
 class Serializer(ABC):
