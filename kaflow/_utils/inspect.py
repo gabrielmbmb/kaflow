@@ -14,7 +14,11 @@ def is_annotated_param(param: Any) -> bool:
 
 
 def annotated_param_with(item: Any, param: Any) -> bool:
-    return is_annotated_param(param) and item in get_args(param)
+    if is_annotated_param(param):
+        for arg in get_args(param):
+            if arg == item or isinstance(arg, item):
+                return True
+    return False
 
 
 def has_return_annotation(signature: Signature) -> bool:
