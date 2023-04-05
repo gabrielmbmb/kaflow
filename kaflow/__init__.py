@@ -1,7 +1,8 @@
 from kaflow.applications import Kaflow
+from kaflow.parameters import FromHeader, FromKey, FromValue
 from kaflow.serializers import Json, has_fastavro, has_protobuf
 
-__all__ = ["Kaflow", "Json"]
+__all__ = ["Kaflow", "FromHeader", "FromKey", "FromValue", "Json"]
 
 if has_fastavro:
     from kaflow.serializers import Avro  # noqa: F401
