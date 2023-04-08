@@ -104,10 +104,10 @@ class TopicConsumerFunc:
     def prepare(self, state: ScopeState) -> None:
         self.container_state = state
 
-    def _deserialize_value(self, value: bytes) -> Any:
+    def _deserialize_value(self, value: bytes) -> TopicValueKeyHeader:
         return _deserialize(value, self.value_param_type, self.value_deserializer)
 
-    def _deserialize_key(self, key: bytes) -> Any:
+    def _deserialize_key(self, key: bytes) -> TopicValueKeyHeader | None:
         if self.key_param_type:
             return _deserialize(key, self.key_param_type, self.key_deserializer)
         return None
@@ -125,21 +125,68 @@ class TopicConsumerFunc:
             return headers_
         return None
 
-    async def _deserialize(self, record: ConsumerRecord) -> Any:
-        try:
-            return (
-                self._deserialize_value(record.value),
-                self._deserialize_key(record.key),
-                self._deserialize_headers(record.headers),
+    async def _deserialize(
+        self, record: ConsumerRecord
+    ) -> tuple[
+        TopicValueKeyHeader | None,
+        TopicValueKeyHeader | None,
+        dict[str, TopicValueKeyHeader] | None,
+        bool,
+    ]:
+        async def handle_deserialization_error(
+            error_message: str, record: ConsumerRecord, exception: Exception
+        ) -> None:
+            exc = KaflowDeserializationException(
+                error_message.format(self.name), record=record
             )
-        except Exception as e:
             if not self.deserialization_error_handler:
-                raise KaflowDeserializationException(
-                    f"Failed to deserialize message from topic `{self.name}`",
-                    record=record,
-                ) from e
-            await self.deserialization_error_handler(e, record)
-            return None
+                raise exc from exception
+            await self.deserialization_error_handler(exc)
+
+        deserialized = True
+        try:
+            value = self._deserialize_value(record.value)
+        except Exception as e:
+            await handle_deserialization_error(
+                (
+                    "Failed to deserialize value of message comming from topic"
+                    f" `{self.name}`"
+                ),
+                record,
+                e,
+            )
+            value = None
+            deserialized = False
+
+        try:
+            key = self._deserialize_key(record.key)
+        except Exception as e:
+            await handle_deserialization_error(
+                (
+                    "Failed to deserialize key of message comming from topic"
+                    f" `{self.name}`"
+                ),
+                record,
+                e,
+            )
+            key = None
+            deserialized = False
+
+        try:
+            headers = self._deserialize_headers(record.headers)
+        except Exception as e:
+            await handle_deserialization_error(
+                (
+                    "Failed to deserialize headers of message comming from topic"
+                    f" `{self.name}`"
+                ),
+                record,
+                e,
+            )
+            headers = None
+            deserialized
+
+        return value, key, headers, deserialized
 
     async def _execute_dependent(
         self,
@@ -183,7 +230,9 @@ class TopicConsumerFunc:
             await self._publish_messages(message)
 
     async def consume(self, record: ConsumerRecord) -> None:
-        value, key, headers = await self._deserialize(record)
+        value, key, headers, deserialized = await self._deserialize(record)
+        if not deserialized:
+            return
         message = ReadMessage(
             value=value,
             key=key,
