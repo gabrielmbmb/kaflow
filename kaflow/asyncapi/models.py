@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 from pydantic import AnyUrl, BaseModel, EmailStr, Field
 
@@ -41,9 +41,9 @@ class Server(BaseModel):
     protocol: str
     protocolVersion: Optional[str] = None
     description: Optional[str] = None
-    variables: Optional[Dict[str, ServerVariable]] = None
-    security: Optional[List[Dict[str, Any]]] = None
-    bindings: Optional[Dict[str, Binding]] = None
+    variables: Optional[Mapping[str, Union[ServerVariable, Reference]]] = None
+    security: Optional[List[Mapping[str, Any]]] = None
+    bindings: Optional[Mapping[str, Union[Binding, Reference]]] = None
 
 
 class ExternalDocs(BaseModel):
@@ -72,7 +72,8 @@ class BaseOperation(BaseModel):
     description: Optional[str] = None
     tags: Optional[List[Tag]] = None
     externalDocs: Optional[ExternalDocs] = None
-    bindings: Optional[Dict[str, Binding]] = None
+    bindings: Optional[Mapping[str, Union[Binding, Reference]]] = None
+    traits: Optional[List[Union[Trait, Reference]]] = None
 
 
 class OperationTrait(BaseOperation):
@@ -134,10 +135,11 @@ class Parameter(BaseModel):
 class Channel(BaseModel):
     ref: Optional[str] = Field(None, alias="$ref")
     description: Optional[str] = None
+    servers: Optional[List[str]] = None
     subscribe: Optional[Operation] = None
     publish: Optional[Operation] = None
     parameters: Optional[Dict[str, Union[Parameter, Reference]]] = None
-    bindings: Optional[Dict[str, Binding]] = None
+    bindings: Optional[Mapping[str, Union[Binding, Reference]]] = None
 
 
 class CorrelationId(BaseModel):
@@ -196,8 +198,9 @@ class AsyncAPI(BaseModel):
     asyncapi: str
     id: Optional[str] = None
     info: Info
-    servers: Optional[Dict[str, Server]] = None
-    channels: Dict[str, Channel] = {}
+    servers: Optional[Mapping[str, Server]] = None
+    defaultContentType: Optional[str] = None
+    channels: Mapping[str, Channel] = {}
     components: Optional[Components] = None
     tags: Optional[List[Tag]] = None
     externalDocs: Optional[ExternalDocs] = None

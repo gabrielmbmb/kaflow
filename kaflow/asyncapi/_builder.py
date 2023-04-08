@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 
 
 def build_asyncapi(
-    *,
     asyncapi_version: str,
     title: str,
     version: str,
@@ -18,8 +17,8 @@ def build_asyncapi(
     terms_of_service: str | None = None,
     contact: dict[str, Any] | None = None,
     license_info: dict[str, Any] | None = None,
-    consumers: dict[str, TopicConsumerFunc],
-    producers: dict[str, list[ProducerFunc]],
+    consumers: dict[str, TopicConsumerFunc] | None = None,
+    producers: dict[str, list[ProducerFunc]] | None = None,
 ) -> models.AsyncAPI:
     asyncapi_info = {"title": title, "version": version}
     if description:
