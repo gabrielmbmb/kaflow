@@ -17,28 +17,32 @@ from typing import (
     Sequence,
     Union,
 )
+from uuid import uuid4
 
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, ConsumerRecord
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.helpers import create_ssl_context
 from di import Container, ScopeState
 from di.dependent import Dependent
 from di.executors import AsyncExecutor
 
 from kaflow import parameters
+from kaflow._consumer import TopicConsumerFunc
 from kaflow._utils.asyncio import asyncify
 from kaflow._utils.inspect import is_not_coroutine_function
+from kaflow.asyncapi._builder import build_asyncapi
 from kaflow.dependencies import Scopes
+from kaflow.exceptions import KaflowDeserializationException
 from kaflow.message import Message
-from kaflow.topic import TopicConsumerFunc
 
 if TYPE_CHECKING:
+    from kaflow.asyncapi.models import AsyncAPI
     from kaflow.serializers import Serializer
     from kaflow.typing import TopicValueKeyHeader
 
 ConsumerFunc = Callable[..., Union[Message, Awaitable[Union[Message, None]], None]]
 ProducerFunc = Callable[..., Union[Message, Awaitable[Message]]]
 ExceptionHandlerFunc = Callable[[Exception], Awaitable]
-DeserializationErrorHandlerFunc = Callable[[Exception, ConsumerRecord], Awaitable[None]]
+DeserializationErrorHandlerFunc = Callable[[KaflowDeserializationException], Awaitable]
 
 
 SecurityProtocol = Literal["PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"]
@@ -51,8 +55,8 @@ AutoOffsetReset = Literal["earliest", "latest", "none"]
 class Kaflow:
     def __init__(
         self,
-        name: str,
         brokers: str | list[str],
+        client_id: str | None = None,
         group_id: str | None = None,
         security_protocol: SecurityProtocol = "PLAINTEXT",
         cafile: str | None = None,
@@ -68,9 +72,17 @@ class Kaflow:
         auto_commit: bool = True,
         auto_commit_interval_ms: int = 5000,
         lifespan: Callable[..., AsyncContextManager[None]] | None = None,
+        asyncapi_version: str = "2.6.0",
+        title: str = "Kaflow",
+        version: str = "0.0.1",
+        description: str | None = None,
+        terms_of_service: str | None = None,
+        contact: dict[str, str | Any] | None = None,
+        license_info: dict[str, str | Any] | None = None,
     ) -> None:
-        self.name = name
+        # AIOKafka
         self.brokers = brokers
+        self.client_id = client_id or f"kaflow-{uuid4()}"
         self.group_id = group_id
         self.security_protocol = security_protocol
         self.sasl_mechanism = sasl_mechanism
@@ -91,6 +103,16 @@ class Kaflow:
             )
         else:
             self.ssl_context = None
+
+        # AsyncAPI
+        self.asyncapi_version = asyncapi_version
+        self.title = title
+        self.version = version
+        self.description = description
+        self.terms_of_service = terms_of_service
+        self.contact = contact
+        self.license_info = license_info
+        self.asyncapi_schema: AsyncAPI | None = None
 
         self._container = Container()
         self._container_state = ScopeState()
@@ -175,7 +197,7 @@ class Kaflow:
             *self._consumers.keys(),
             loop=self._loop,
             bootstrap_servers=self.brokers,
-            client_id=self.name,
+            client_id=self.client_id,
             group_id=self.group_id,
             ssl_context=self.ssl_context,
             security_protocol=self.security_protocol,
@@ -191,7 +213,7 @@ class Kaflow:
         return AIOKafkaProducer(
             loop=self._loop,
             bootstrap_servers=self.brokers,
-            client_id=self.name,
+            client_id=self.client_id,
             ssl_context=self.ssl_context,
             security_protocol=self.security_protocol,
             sasl_mechanism=self.sasl_mechanism,
@@ -236,7 +258,12 @@ class Kaflow:
 
             def _create_coro(topic: str, message: Any) -> Coroutine[Any, Any, None]:
                 if not isinstance(message, Message):
-                    raise ValueError()
+                    raise ValueError(
+                        "Kaflow producer function has to return an instance of"
+                        " `Message` containing the information of the message to be"
+                        f" send. Update `{func.__name__}` to return a `Message`"
+                        " instance."
+                    )
                 return self._publish(
                     topic=topic,
                     value=message.value,
@@ -289,9 +316,26 @@ class Kaflow:
             func: DeserializationErrorHandlerFunc,
         ) -> DeserializationErrorHandlerFunc:
             self._deserialization_error_handler = func
+            if is_not_coroutine_function(func):
+                self._deserialization_error_handler = asyncify(func)
             return func
 
         return register_deserialization_error_handler
+
+    def asyncapi(self) -> AsyncAPI:
+        if not self.asyncapi_schema:
+            self.asyncapi_schema = build_asyncapi(
+                asyncapi_version=self.asyncapi_version,
+                title=self.title,
+                version=self.version,
+                description=self.description,
+                terms_of_service=self.terms_of_service,
+                contact=self.contact,
+                license_info=self.license_info,
+                consumers=self._consumers,
+                producers=self._producers,
+            )
+        return self.asyncapi_schema
 
     async def _publish(
         self,

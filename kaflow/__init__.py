@@ -9,7 +9,7 @@ from kaflow.parameters import (
     MessagePartition,
     MessageTimestamp,
 )
-from kaflow.serializers import Json, has_fastavro, has_protobuf
+from kaflow.serializers import Json, String, has_fastavro, has_protobuf
 
 __all__ = [
     "Kaflow",
@@ -22,6 +22,7 @@ __all__ = [
     "MessagePartition",
     "MessageTimestamp",
     "Json",
+    "String",
 ]
 
 if has_fastavro:
