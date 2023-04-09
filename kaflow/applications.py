@@ -24,17 +24,21 @@ from aiokafka.helpers import create_ssl_context
 from di import Container, ScopeState
 from di.dependent import Dependent
 from di.executors import AsyncExecutor
+from kafka.coordinator.assignors.roundrobin import RoundRobinPartitionAssignor
+from kafka.partitioner.default import DefaultPartitioner
 
 from kaflow import parameters
 from kaflow._consumer import TopicConsumerFunc
 from kaflow._utils.asyncio import asyncify
 from kaflow._utils.inspect import is_not_coroutine_function
-from kaflow.asyncapi._builder import build_asyncapi
 from kaflow.dependencies import Scopes
 from kaflow.exceptions import KaflowDeserializationException
 from kaflow.message import Message
 
 if TYPE_CHECKING:
+    from aiokafka.abc import AbstractTokenProvider
+    from kafka.coordinator.assignors.abstract import AbstractPartitionAssignor
+
     from kaflow.asyncapi.models import AsyncAPI
     from kaflow.serializers import Serializer
     from kaflow.typing import TopicValueKeyHeader
@@ -45,32 +49,67 @@ ExceptionHandlerFunc = Callable[[Exception], Awaitable]
 DeserializationErrorHandlerFunc = Callable[[KaflowDeserializationException], Awaitable]
 
 
-SecurityProtocol = Literal["PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"]
-SaslMechanism = Literal[
-    "PLAIN", "GSSAPI", "OAUTHBEARER", "SCRAM-SHA-256", "SCRAM-SHA-512"
-]
-AutoOffsetReset = Literal["earliest", "latest", "none"]
-
-
 class Kaflow:
     def __init__(
         self,
         brokers: str | list[str],
         client_id: str | None = None,
         group_id: str | None = None,
-        security_protocol: SecurityProtocol = "PLAINTEXT",
+        acks: Literal[0, 1, "all"] = 1,
+        compression_type: Literal["gzip", "snappy", "lz4", "zstd", None] = None,
+        max_batch_size: int = 16384,
+        partitioner: Callable[
+            [bytes, list[int], list[int]], int
+        ] = DefaultPartitioner(),
+        max_request_size: int = 1048576,
+        linger_ms: int = 0,
+        send_backoff_ms: int = 100,
+        connections_max_idle_ms: int = 540000,
+        enable_idempotence: bool = False,
+        transactional_id: str | None = None,
+        transaction_timeout_ms: int = 60000,
+        fetch_max_wait_ms: int = 500,
+        fetch_max_bytes: int = 52428800,
+        fetch_min_bytes: int = 1,
+        max_partition_fetch_bytes: int = 1 * 1024 * 1024,
+        request_timeout_ms: int = 40 * 1000,
+        retry_backoff_ms: int = 100,
+        auto_offset_reset: Literal["earliest", "latest", "none"] = "latest",
+        enable_auto_commit: bool = True,
+        auto_commit_interval_ms: int = 5000,
+        check_crcs: bool = True,
+        metadata_max_age_ms: int = 5 * 60 * 1000,
+        partition_assignment_strategy: list[AbstractPartitionAssignor] | None = None,
+        max_poll_interval_ms: int = 300000,
+        rebalance_timeout_ms: int | None = None,
+        session_timeout_ms: int = 10000,
+        heartbeat_interval_ms: int = 3000,
+        consumer_timeout_ms: int = 200,
+        max_poll_records: int | None = None,
+        kafka_api_version: str = "auto",
+        security_protocol: Literal[
+            "PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"
+        ] = "PLAINTEXT",
+        exclude_internal_topics: bool = True,
+        connection_max_idle_ms: int = 540000,
+        isolation_level: Literal[
+            "read_committed", "read_uncommitted"
+        ] = "read_committed",
         cafile: str | None = None,
         capath: str | None = None,
         cadata: bytes | None = None,
         certfile: str | None = None,
         keyfile: str | None = None,
         cert_password: str | None = None,
-        sasl_mechanism: SaslMechanism | None = None,
+        sasl_mechanism: Literal[
+            "PLAIN", "GSSAPI", "OAUTHBEARER", "SCRAM-SHA-256", "SCRAM-SHA-512"
+        ]
+        | None = None,
         sasl_plain_username: str | None = None,
         sasl_plain_password: str | None = None,
-        auto_offset_reset: AutoOffsetReset = "latest",
-        auto_commit: bool = True,
-        auto_commit_interval_ms: int = 5000,
+        sasl_kerberos_service_name: str = "kafka",
+        sasl_kerberos_domain_name: str | None = None,
+        sasl_oauth_token_provider: AbstractTokenProvider | None = None,
         lifespan: Callable[..., AsyncContextManager[None]] | None = None,
         asyncapi_version: str = "2.6.0",
         title: str = "Kaflow",
@@ -84,13 +123,54 @@ class Kaflow:
         self.brokers = brokers
         self.client_id = client_id or f"kaflow-{uuid4()}"
         self.group_id = group_id
+        self.acks = acks
+        self.compression_type = compression_type
+        self.max_batch_size = max_batch_size
+        self.partitioner = partitioner
+        self.max_request_size = max_request_size
+        self.linger_ms = linger_ms
+        self.send_backoff_ms = send_backoff_ms
+        self.connections_max_idle_ms = connections_max_idle_ms
+        self.enable_idempotence = enable_idempotence
+        self.transactional_id = transactional_id
+        self.transaction_timeout_ms = transaction_timeout_ms
+        self.fetch_max_wait_ms = fetch_max_wait_ms
+        self.fetch_max_bytes = fetch_max_bytes
+        self.fetch_min_bytes = fetch_min_bytes
+        self.max_partition_fetch_bytes = max_partition_fetch_bytes
+        self.request_timeout_ms = request_timeout_ms
+        self.retry_backoff_ms = retry_backoff_ms
+        self.auto_offset_reset = auto_offset_reset
+        self.enable_auto_commit = enable_auto_commit
+        self.auto_commit_interval_ms = auto_commit_interval_ms
+        self.check_crcs = check_crcs
+        self.metadata_max_age_ms = metadata_max_age_ms
+        self.partition_assignment_strategy = partition_assignment_strategy or (
+            RoundRobinPartitionAssignor,
+        )
+        self.max_poll_interval_ms = max_poll_interval_ms
+        self.rebalance_timeout_ms = rebalance_timeout_ms
+        self.session_timeout_ms = session_timeout_ms
+        self.heartbeat_interval_ms = heartbeat_interval_ms
+        self.consumer_timeout_ms = consumer_timeout_ms
+        self.max_poll_records = max_poll_records
+        self.kafka_api_version = kafka_api_version
         self.security_protocol = security_protocol
+        self.exclude_internal_topics = exclude_internal_topics
+        self.connection_max_idle_ms = connection_max_idle_ms
+        self.isolation_level = isolation_level
+        self.cafile = cafile
+        self.capath = capath
+        self.cadata = cadata
+        self.certfile = certfile
+        self.keyfile = keyfile
+        self.cert_password = cert_password
         self.sasl_mechanism = sasl_mechanism
         self.sasl_plain_username = sasl_plain_username
         self.sasl_plain_password = sasl_plain_password
-        self.auto_offset_reset = auto_offset_reset
-        self.auto_commit = auto_commit
-        self.auto_commit_interval_ms = auto_commit_interval_ms
+        self.sasl_kerberos_service_name = sasl_kerberos_service_name
+        self.sasl_kerberos_domain_name = sasl_kerberos_domain_name
+        self.sasl_oauth_token_provider = sasl_oauth_token_provider
 
         if security_protocol == "SSL" or security_protocol == "SASL_SSL":
             self.ssl_context = create_ssl_context(
@@ -114,6 +194,7 @@ class Kaflow:
         self.license_info = license_info
         self.asyncapi_schema: AsyncAPI | None = None
 
+        # di
         self._container = Container()
         self._container_state = ScopeState()
 
@@ -199,14 +280,36 @@ class Kaflow:
             bootstrap_servers=self.brokers,
             client_id=self.client_id,
             group_id=self.group_id,
-            ssl_context=self.ssl_context,
+            fetch_min_bytes=self.fetch_min_bytes,
+            fetch_max_bytes=self.fetch_max_bytes,
+            fetch_max_wait_ms=self.fetch_max_wait_ms,
+            max_partition_fetch_bytes=self.max_partition_fetch_bytes,
+            max_poll_records=self.max_poll_records,
+            request_timeout_ms=self.request_timeout_ms,
+            retry_backoff_ms=self.retry_backoff_ms,
+            auto_offset_reset=self.auto_offset_reset,
+            enable_auto_commit=self.enable_auto_commit,
+            auto_commit_interval_ms=self.auto_commit_interval_ms,
+            check_crcs=self.check_crcs,
+            metadata_max_age_ms=self.metadata_max_age_ms,
+            partition_assignment_strategy=self.partition_assignment_strategy,
+            max_poll_interval_ms=self.max_poll_interval_ms,
+            rebalance_timeout_ms=self.rebalance_timeout_ms,
+            session_timeout_ms=self.session_timeout_ms,
+            heartbeat_interval_ms=self.heartbeat_interval_ms,
+            consumer_timeout_ms=self.consumer_timeout_ms,
+            api_version=self.kafka_api_version,
             security_protocol=self.security_protocol,
+            ssl_context=self.ssl_context,
+            exclude_internal_topics=self.exclude_internal_topics,
+            connections_max_idle_ms=self.connections_max_idle_ms,
+            isolation_level=self.isolation_level,
             sasl_mechanism=self.sasl_mechanism,
             sasl_plain_username=self.sasl_plain_username,
             sasl_plain_password=self.sasl_plain_password,
-            enable_auto_commit=self.auto_commit,
-            auto_offset_reset=self.auto_offset_reset,
-            auto_commit_interval_ms=self.auto_commit_interval_ms,
+            sasl_kerberos_domain_name=self.sasl_kerberos_domain_name,
+            sasl_kerberos_service_name=self.sasl_kerberos_service_name,
+            sasl_oauth_token_provider=self.sasl_oauth_token_provider,
         )
 
     def _create_producer(self) -> AIOKafkaProducer:
@@ -214,11 +317,29 @@ class Kaflow:
             loop=self._loop,
             bootstrap_servers=self.brokers,
             client_id=self.client_id,
-            ssl_context=self.ssl_context,
+            metadata_max_age_ms=self.metadata_max_age_ms,
+            request_timeout_ms=self.request_timeout_ms,
+            api_version=self.kafka_api_version,
+            acks=self.acks,
+            compression_type=self.compression_type,
+            max_batch_size=self.max_batch_size,
+            partitioner=self.partitioner,
+            max_request_size=self.max_request_size,
+            linger_ms=self.linger_ms,
+            send_backoff_ms=self.send_backoff_ms,
+            retry_backoff_ms=self.retry_backoff_ms,
             security_protocol=self.security_protocol,
+            ssl_context=self.ssl_context,
+            connections_max_idle_ms=self.connections_max_idle_ms,
+            enable_idempotence=self.enable_idempotence,
+            transactional_id=self.transactional_id,
+            transaction_timeout_ms=self.transaction_timeout_ms,
             sasl_mechanism=self.sasl_mechanism,
             sasl_plain_username=self.sasl_plain_username,
             sasl_plain_password=self.sasl_plain_password,
+            sasl_kerberos_service_name=self.sasl_kerberos_service_name,
+            sasl_kerberos_domain_name=self.sasl_kerberos_domain_name,
+            sasl_oauth_token_provider=self.sasl_oauth_token_provider,
         )
 
     def consume(
@@ -323,19 +444,20 @@ class Kaflow:
         return register_deserialization_error_handler
 
     def asyncapi(self) -> AsyncAPI:
-        if not self.asyncapi_schema:
-            self.asyncapi_schema = build_asyncapi(
-                asyncapi_version=self.asyncapi_version,
-                title=self.title,
-                version=self.version,
-                description=self.description,
-                terms_of_service=self.terms_of_service,
-                contact=self.contact,
-                license_info=self.license_info,
-                consumers=self._consumers,
-                producers=self._producers,
-            )
-        return self.asyncapi_schema
+        # if not self.asyncapi_schema:
+        #     self.asyncapi_schema = build_asyncapi(
+        #         asyncapi_version=self.asyncapi_version,
+        #         title=self.title,
+        #         version=self.version,
+        #         description=self.description,
+        #         terms_of_service=self.terms_of_service,
+        #         contact=self.contact,
+        #         license_info=self.license_info,
+        #         consumers=self._consumers,
+        #         producers=self._producers,
+        #     )
+        # return self.asyncapi_schema
+        raise NotImplementedError("AsyncAPI is not implemented yet.")
 
     async def _publish(
         self,
