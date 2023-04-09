@@ -43,6 +43,20 @@ class Serializer(ABC):
         return []
 
 
+class StringSerializer(Serializer):
+    def __init__(self, **kwargs: Any) -> None:
+        pass
+
+    def serialize(self, data: Any) -> bytes:
+        return str(data).encode()
+
+    def deserialize(self, data: bytes) -> Any:
+        return data.decode()
+
+
+String = Annotated[T, StringSerializer, MESSAGE_SERIALIZER_FLAG]
+
+
 class JsonSerializer(Serializer):
     def __init__(self, **kwargs: Any) -> None:
         pass
