@@ -28,7 +28,7 @@ def get_asyncapi_html(
             defer
         ></script>
         <asyncapi-component
-            schema='{asyncapi_schema.json()}'
+            schema='{asyncapi_schema.json(by_alias=True, exclude_none=True)}'
             cssImportPath="{asyncapi_react_component_css_url}"
         ></asyncapi-component>
     </body>
