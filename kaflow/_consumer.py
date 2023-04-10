@@ -188,6 +188,14 @@ class TopicConsumerFunc:
 
         return value, key, headers, deserialized
 
+    def _lookup_exception_handler(
+        self, exc: Exception
+    ) -> Callable[..., Awaitable[None]] | None:
+        for cls in type(exc).__mro__:
+            if cls in self.exception_handlers:
+                return self.exception_handlers[cls]
+        return None
+
     async def _execute_dependent(
         self,
         consumer_state: ScopeState,
@@ -200,7 +208,10 @@ class TopicConsumerFunc:
                 values={ReadMessage: message},
             )
         except tuple(self.exception_handlers.keys()) as e:
-            await self.exception_handlers[type(e)](e)
+            handler = self._lookup_exception_handler(e)
+            if not handler:
+                raise e
+            await handler(e)
             return None
 
     async def _publish_messages(self, message: Message) -> None:

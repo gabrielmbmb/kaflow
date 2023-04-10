@@ -87,9 +87,7 @@ class Kaflow:
         consumer_timeout_ms: int = 200,
         max_poll_records: int | None = None,
         kafka_api_version: str = "auto",
-        security_protocol: Literal[
-            "PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"
-        ] = "PLAINTEXT",
+        security_protocol: Literal["PLAINTEXT", "SSL"] = "PLAINTEXT",
         exclude_internal_topics: bool = True,
         connection_max_idle_ms: int = 540000,
         isolation_level: Literal[
@@ -172,7 +170,7 @@ class Kaflow:
         self.sasl_kerberos_domain_name = sasl_kerberos_domain_name
         self.sasl_oauth_token_provider = sasl_oauth_token_provider
 
-        if security_protocol == "SSL" or security_protocol == "SASL_SSL":
+        if security_protocol == "SSL":
             self.ssl_context = create_ssl_context(
                 cafile=cafile,
                 capath=capath,
