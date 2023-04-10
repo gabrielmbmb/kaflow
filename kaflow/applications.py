@@ -276,7 +276,6 @@ class Kaflow:
     def _create_consumer(self) -> AIOKafkaConsumer:
         return AIOKafkaConsumer(
             *self._consumers.keys(),
-            loop=self._loop,
             bootstrap_servers=self.brokers,
             client_id=self.client_id,
             group_id=self.group_id,
@@ -314,7 +313,6 @@ class Kaflow:
 
     def _create_producer(self) -> AIOKafkaProducer:
         return AIOKafkaProducer(
-            loop=self._loop,
             bootstrap_servers=self.brokers,
             client_id=self.client_id,
             metadata_max_age_ms=self.metadata_max_age_ms,
