@@ -74,16 +74,28 @@ Json = Annotated[T, JsonSerializer, MESSAGE_SERIALIZER_FLAG]
 if has_fastavro:
 
     class AvroSerializer(Serializer):
-        def __init__(self, avro_schema: dict[str, Any], **kwargs: Any) -> None:
+        def __init__(
+            self,
+            avro_schema: dict[str, Any] | None = None,
+            include_schema: bool = False,
+            **kwargs: Any,
+        ) -> None:
             self.avro_schema = avro_schema
+            self.include_schema = include_schema
 
         def serialize(self, data: Any) -> bytes:
             bytes_io = io.BytesIO()
-            fastavro.schemaless_writer(bytes_io, self.avro_schema, data)
+            if self.include_schema:
+                fastavro.writer(bytes_io, self.avro_schema, [data])
+            else:
+                fastavro.schemaless_writer(bytes_io, self.avro_schema, data)
             return bytes_io.getvalue()
 
         def deserialize(self, data: bytes) -> Any:
-            return fastavro.schemaless_reader(io.BytesIO(data), self.avro_schema)
+            bytes_io = io.BytesIO(data)
+            if self.avro_schema:
+                return fastavro.schemaless_reader(io.BytesIO(data), self.avro_schema)
+            return list(fastavro.reader(bytes_io))[0]
 
         @staticmethod
         def extra_annotations_keys() -> list[str]:
