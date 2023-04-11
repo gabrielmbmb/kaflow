@@ -84,18 +84,20 @@ if has_fastavro:
             self.include_schema = include_schema
 
         def serialize(self, data: Any) -> bytes:
-            bytes_io = io.BytesIO()
-            if self.include_schema:
-                fastavro.writer(bytes_io, self.avro_schema, [data])
-            else:
-                fastavro.schemaless_writer(bytes_io, self.avro_schema, data)
-            return bytes_io.getvalue()
+            with io.BytesIO() as bytes_io:
+                if self.include_schema:
+                    fastavro.writer(
+                        bytes_io, self.avro_schema, [data], sync_marker=b"Obj"
+                    )
+                else:
+                    fastavro.schemaless_writer(bytes_io, self.avro_schema, data)
+                return bytes_io.getvalue()
 
         def deserialize(self, data: bytes) -> Any:
-            bytes_io = io.BytesIO(data)
-            if self.avro_schema:
-                return fastavro.schemaless_reader(io.BytesIO(data), self.avro_schema)
-            return list(fastavro.reader(bytes_io))[0]
+            with io.BytesIO(data) as bytes_io:
+                if self.avro_schema:
+                    return fastavro.schemaless_reader(bytes_io, self.avro_schema)
+                return list(fastavro.reader(bytes_io))[0]
 
         @staticmethod
         def extra_annotations_keys() -> list[str]:
