@@ -32,14 +32,14 @@ T = TypeVar("T")
 class Serializer(ABC):
     @abstractmethod
     def serialize(self, data: Any) -> bytes:
-        ...
+        raise NotImplementedError
 
     @abstractmethod
     def deserialize(self, data: bytes) -> Any:
-        ...
+        raise NotImplementedError
 
     @staticmethod
-    def extra_annotations_keys() -> list[str]:
+    def required_extra_annotations_keys() -> list[str]:
         return []
 
 
@@ -71,7 +71,7 @@ class JsonSerializer(Serializer):
 Json = Annotated[T, JsonSerializer, MESSAGE_SERIALIZER_FLAG]
 
 
-if has_fastavro:
+if has_fastavro:  # pragma: no cover
 
     class AvroSerializer(Serializer):
         def __init__(
@@ -104,13 +104,9 @@ if has_fastavro:
                     return fastavro.schemaless_reader(bytes_io, self.avro_schema)
                 return list(fastavro.reader(bytes_io))[0]
 
-        @staticmethod
-        def extra_annotations_keys() -> list[str]:
-            return ["avro_schema"]
-
     Avro = Annotated[T, AvroSerializer, MESSAGE_SERIALIZER_FLAG]
 
-if has_protobuf:
+if has_protobuf:  # pragma: no cover
 
     class ProtobufSerializer(Serializer):
         def __init__(self, protobuf_schema: type[Any], **kwargs: Any) -> None:
@@ -128,7 +124,7 @@ if has_protobuf:
             return json_format.MessageToDict(entity)
 
         @staticmethod
-        def extra_annotations_keys() -> list[str]:
+        def required_extra_annotations_keys() -> list[str]:
             return ["protobuf_schema"]
 
     Protobuf = Annotated[T, ProtobufSerializer, MESSAGE_SERIALIZER_FLAG]

@@ -48,12 +48,27 @@ def _annotated_serializer_info(
     """
     param_type = param[1].__args__[0]
     serializer, serializer_extra = _get_serializer_info(param[1])
-    if not serializer and param_type is not bytes:
-        raise ValueError(
-            f"'{param[0]}' parameter of '{func_name}' function has not been annotated"
-            " with a Kaflow serializer and its type is not `bytes`. Please annotate"
-            " the parameter with a Kaflow serializer or use `bytes` as the type."
-        )
+    if not serializer:
+        if param_type is not bytes:
+            raise ValueError(
+                f"'{param[0]}' parameter of '{func_name}' function has not been"
+                " annotated with a Kaflow serializer and its type is not `bytes`."
+                " Please annotate the parameter with a Kaflow serializer or use"
+                " `bytes` as the type."
+            )
+    else:
+        for key in serializer.required_extra_annotations_keys():
+            if key not in serializer_extra:
+                format_name = serializer.__name__.replace("Serializer", "")
+                extra_annotations_dict = f"{{'{key}': ...}}"
+                raise ValueError(
+                    f"'{param[0]}' parameter of '{func_name}' uses the"
+                    f" '{serializer.__name__}' serializer, but the '{key}' parameter of"
+                    " the serializer is missing. Please annotate the serializer with a"
+                    " `dict` containing the required parameters:\n\nMyProtobuf ="
+                    f" Annotated[{format_name}[...], {extra_annotations_dict}]\n\nasync"
+                    f" def my_func({param[0]}: FromX[MyProtobuf]): ..."
+                )
     return param_type, serializer, serializer_extra
 
 
