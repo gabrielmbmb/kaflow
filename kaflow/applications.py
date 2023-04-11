@@ -172,7 +172,7 @@ class Kaflow:
         self.sasl_kerberos_domain_name = sasl_kerberos_domain_name
         self.sasl_oauth_token_provider = sasl_oauth_token_provider
 
-        if security_protocol == "SSL":
+        if security_protocol in ["SSL", "SASL_SSL"]:
             self.ssl_context = create_ssl_context(
                 cafile=cafile,
                 capath=capath,
