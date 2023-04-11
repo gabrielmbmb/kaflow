@@ -78,16 +78,21 @@ if has_fastavro:
             self,
             avro_schema: dict[str, Any] | None = None,
             include_schema: bool = False,
+            sync_marker: bytes = b"",
             **kwargs: Any,
         ) -> None:
             self.avro_schema = avro_schema
             self.include_schema = include_schema
+            self.sync_marker = sync_marker
 
         def serialize(self, data: Any) -> bytes:
             with io.BytesIO() as bytes_io:
                 if self.include_schema:
                     fastavro.writer(
-                        bytes_io, self.avro_schema, [data], sync_marker=b"Obj"
+                        bytes_io,
+                        schema=self.avro_schema,
+                        records=[data],
+                        sync_marker=self.sync_marker,
                     )
                 else:
                     fastavro.schemaless_writer(bytes_io, self.avro_schema, data)
