@@ -39,7 +39,18 @@ pip install kaflow
 ## Example
 
 ```python
-from kaflow import Json, Kaflow
+from kaflow import (
+    FromHeader,
+    FromKey,
+    FromValue,
+    Json,
+    Kaflow,
+    Message,
+    MessageOffset,
+    MessagePartition,
+    MessageTimestamp,
+    String,
+)
 from pydantic import BaseModel
 
 
@@ -49,14 +60,30 @@ class UserClick(BaseModel):
     timestamp: int
 
 
+class Key(BaseModel):
+    environment: str
+
+
 app = Kaflow(name="AwesomeKakfaApp", brokers="localhost:9092")
 
 
-@app.consume(topic="user_clicks", sink_topics=("user_clicks_json",))
-async def consume_user_clicks(message: Json[UserClick]) -> Json[UserClick]:
-    print("user click", message)
-    return message
+@app.consume(topic="user_clicks", sink_topics=["user_clicks_json"])
+async def consume_user_clicks(
+    message: FromValue[Json[UserClick]],
+    key: FromKey[Json[Key]],
+    x_correlation_id: FromHeader[String[str]],
+    x_request_id: FromHeader[String[str]],
+    partition: MessagePartition,
+    offset: MessageOffset,
+    timestamp: MessageTimestamp,
+) -> Message:
+    # Do something with the message
+    ...
+
+    # Publish to another topic
+    return Message(value=b'{"user_clicked": "true"}')
 
 
 app.run()
+
 ```
