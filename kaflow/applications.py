@@ -87,7 +87,9 @@ class Kaflow:
         consumer_timeout_ms: int = 200,
         max_poll_records: int | None = None,
         kafka_api_version: str = "auto",
-        security_protocol: Literal["PLAINTEXT", "SSL"] = "PLAINTEXT",
+        security_protocol: Literal[
+            "PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"
+        ] = "PLAINTEXT",
         exclude_internal_topics: bool = True,
         connection_max_idle_ms: int = 540000,
         isolation_level: Literal[
