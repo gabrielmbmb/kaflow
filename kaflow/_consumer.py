@@ -230,7 +230,7 @@ class TopicConsumerFunc:
                 ]
             )
 
-    async def _process(self, read_message: ReadMessage) -> None:
+    async def _process(self, read_message: ReadMessage) -> Message | None:
         async with self.container.enter_scope(
             "consumer", state=self.container_state
         ) as consumer_state:
@@ -239,11 +239,13 @@ class TopicConsumerFunc:
             )
         if message and isinstance(message, Message):
             await self._publish_messages(message)
+            return message
+        return None
 
-    async def consume(self, record: ConsumerRecord) -> None:
+    async def consume(self, record: ConsumerRecord) -> Message | None:
         value, key, headers, deserialized = await self._deserialize(record)
         if not deserialized:
-            return
+            return None
         message = ReadMessage(
             value=value,
             key=key,
@@ -252,4 +254,4 @@ class TopicConsumerFunc:
             partition=record.partition,
             timestamp=record.timestamp,
         )
-        await self._process(read_message=message)
+        return await self._process(read_message=message)
