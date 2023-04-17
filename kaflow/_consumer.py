@@ -44,7 +44,6 @@ class TopicConsumerFunc:
         "publish_fn",
         "exception_handlers",
         "deserialization_error_handler",
-        "dependent",
         "func",
         "value_param_type",
         "value_deserializer",
@@ -54,6 +53,7 @@ class TopicConsumerFunc:
         "sink_topics",
         "executor",
         "container_state",
+        "dependent",
     )
 
     def __init__(
@@ -90,9 +90,7 @@ class TopicConsumerFunc:
         self.publish_fn = publish_fn
         self.exception_handlers = exception_handlers
         self.deserialization_error_handler = deserialization_error_handler
-        self.dependent = self.container.solve(
-            Dependent(func, scope="consumer"), scopes=Scopes
-        )
+        self.func = func
         self.value_param_type = value_param_type
         self.value_deserializer = value_deserializer
         self.key_param_type = key_param_type
@@ -103,6 +101,9 @@ class TopicConsumerFunc:
 
     def prepare(self, state: ScopeState) -> None:
         self.container_state = state
+        self.dependent = self.container.solve(
+            Dependent(self.func, scope="consumer"), scopes=Scopes
+        )
 
     def _deserialize_value(self, value: bytes) -> TopicValueKeyHeader:
         return _deserialize(value, self.value_param_type, self.value_deserializer)
@@ -230,7 +231,7 @@ class TopicConsumerFunc:
                 ]
             )
 
-    async def _process(self, read_message: ReadMessage) -> None:
+    async def _process(self, read_message: ReadMessage) -> Message | None:
         async with self.container.enter_scope(
             "consumer", state=self.container_state
         ) as consumer_state:
@@ -239,11 +240,13 @@ class TopicConsumerFunc:
             )
         if message and isinstance(message, Message):
             await self._publish_messages(message)
+            return message
+        return None
 
-    async def consume(self, record: ConsumerRecord) -> None:
+    async def consume(self, record: ConsumerRecord) -> Message | None:
         value, key, headers, deserialized = await self._deserialize(record)
         if not deserialized:
-            return
+            return None
         message = ReadMessage(
             value=value,
             key=key,
@@ -252,4 +255,4 @@ class TopicConsumerFunc:
             partition=record.partition,
             timestamp=record.timestamp,
         )
-        await self._process(read_message=message)
+        return await self._process(read_message=message)
