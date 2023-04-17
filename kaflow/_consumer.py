@@ -44,7 +44,6 @@ class TopicConsumerFunc:
         "publish_fn",
         "exception_handlers",
         "deserialization_error_handler",
-        "dependent",
         "func",
         "value_param_type",
         "value_deserializer",
@@ -54,6 +53,7 @@ class TopicConsumerFunc:
         "sink_topics",
         "executor",
         "container_state",
+        "dependent",
     )
 
     def __init__(
@@ -90,9 +90,7 @@ class TopicConsumerFunc:
         self.publish_fn = publish_fn
         self.exception_handlers = exception_handlers
         self.deserialization_error_handler = deserialization_error_handler
-        self.dependent = self.container.solve(
-            Dependent(func, scope="consumer"), scopes=Scopes
-        )
+        self.func = func
         self.value_param_type = value_param_type
         self.value_deserializer = value_deserializer
         self.key_param_type = key_param_type
@@ -103,6 +101,9 @@ class TopicConsumerFunc:
 
     def prepare(self, state: ScopeState) -> None:
         self.container_state = state
+        self.dependent = self.container.solve(
+            Dependent(self.func, scope="consumer"), scopes=Scopes
+        )
 
     def _deserialize_value(self, value: bytes) -> TopicValueKeyHeader:
         return _deserialize(value, self.value_param_type, self.value_deserializer)

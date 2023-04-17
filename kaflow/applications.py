@@ -31,6 +31,7 @@ from kaflow import parameters
 from kaflow._consumer import TopicConsumerFunc
 from kaflow._utils.asyncio import asyncify
 from kaflow._utils.inspect import is_not_coroutine_function
+from kaflow._utils.overrides import DependencyOverrideManager
 from kaflow.dependencies import Scopes
 from kaflow.exceptions import KaflowDeserializationException
 from kaflow.message import Message
@@ -197,6 +198,7 @@ class Kaflow:
         # di
         self._container = Container()
         self._container_state = ScopeState()
+        self.dependency_overrides = DependencyOverrideManager(self._container)
 
         self._loop = asyncio.get_event_loop()
         self._consumer: AIOKafkaConsumer | None = None
