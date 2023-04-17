@@ -51,7 +51,7 @@ class TestClient:
             key=key,
             value=value,
             checksum=0,
-            serialized_key_size=len(key),
+            serialized_key_size=len(key) if key else 0,
             serialized_value_size=len(value),
             headers=headers,
         )
