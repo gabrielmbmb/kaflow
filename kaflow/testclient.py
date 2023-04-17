@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from functools import wraps
+from time import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from aiokafka import ConsumerRecord
@@ -32,13 +33,15 @@ class TestClient:
     def publish(
         self,
         topic: str,
-        partition: int,
-        offset: int,
-        timestamp: int,
-        key: bytes,
         value: bytes,
-        headers: dict[str, bytes],
+        key: bytes | None = None,
+        headers: dict[str, bytes] | None = None,
+        partition: int = 0,
+        offset: int = 0,
+        timestamp: int | None = None,
     ) -> Message | None:
+        if timestamp is None:
+            timestamp = int(time())
         record = ConsumerRecord(
             topic=topic,
             partition=partition,
