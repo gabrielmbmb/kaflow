@@ -98,7 +98,7 @@ if has_fastavro:
             if self.seek_offset is not None:
                 bytes_io.seek(self.seek_offset)
             if self.avro_schema:
-                return fastavro.schemaless_reader(io.BytesIO(data), self.avro_schema)
+                return fastavro.schemaless_reader(bytes_io, self.avro_schema)
             return list(fastavro.reader(bytes_io))[0]
 
         @staticmethod
