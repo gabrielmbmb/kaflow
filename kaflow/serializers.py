@@ -78,10 +78,12 @@ if has_fastavro:
             self,
             avro_schema: dict[str, Any] | None = None,
             include_schema: bool = False,
+            seek_offset: int | None = None,
             **kwargs: Any,
         ) -> None:
             self.avro_schema = avro_schema
             self.include_schema = include_schema
+            self.seek_offset = seek_offset
 
         def serialize(self, data: Any) -> bytes:
             bytes_io = io.BytesIO()
@@ -93,6 +95,8 @@ if has_fastavro:
 
         def deserialize(self, data: bytes) -> Any:
             bytes_io = io.BytesIO(data)
+            if self.seek_offset is not None:
+                bytes_io.seek(self.seek_offset)
             if self.avro_schema:
                 return fastavro.schemaless_reader(io.BytesIO(data), self.avro_schema)
             return list(fastavro.reader(bytes_io))[0]
