@@ -22,22 +22,15 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Set up PDM
+        uses: pdm-project/setup-pdm@v3 
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - uses: actions/cache@v3
-        id: cache
-        with:
-          path: ${{ env.pythonLocation }}
-          key: ${{ runner.os }}-python-${{ env.PythonLocation }}-${{ hashFiles('pyproject.toml') }}-test
+          cache: true
+          version: 2.7.4
 
       - name: Install dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: make install
+        run: pdm install
 
       - name: Lint
         run: make lint
@@ -81,7 +74,7 @@ jobs:
       - run: ls -la coverage
       - run: coverage combine coverage
       - run: coverage report
-      - run: coverage html --show-contexts --title "Coverage for ${{ github.sha }}"
+      - run: coverage html --show-contexts --title "kaflow coverage for ${{ github.sha }}"
 
       - name: Store coverage HTML
         uses: actions/upload-artifact@v3
