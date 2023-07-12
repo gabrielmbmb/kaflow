@@ -32,14 +32,14 @@ T = TypeVar("T")
 class Serializer(ABC):
     @abstractmethod
     def serialize(self, data: Any) -> bytes:
-        ...
+        raise NotImplementedError
 
     @abstractmethod
     def deserialize(self, data: bytes) -> Any:
-        ...
+        raise NotImplementedError
 
     @staticmethod
-    def extra_annotations_keys() -> list[str]:
+    def required_extra_annotations_keys() -> list[str]:
         return []
 
 
@@ -71,35 +71,42 @@ class JsonSerializer(Serializer):
 Json = Annotated[T, JsonSerializer, MESSAGE_SERIALIZER_FLAG]
 
 
-if has_fastavro:
+if has_fastavro:  # pragma: no cover
 
     class AvroSerializer(Serializer):
         def __init__(
             self,
             avro_schema: dict[str, Any] | None = None,
             include_schema: bool = False,
+            sync_marker: bytes = b"",
             seek_offset: int | None = None,
             **kwargs: Any,
         ) -> None:
             self.avro_schema = avro_schema
             self.include_schema = include_schema
+            self.sync_marker = sync_marker
             self.seek_offset = seek_offset
 
         def serialize(self, data: Any) -> bytes:
-            bytes_io = io.BytesIO()
-            if self.include_schema:
-                fastavro.writer(bytes_io, self.avro_schema, [data])
-            else:
-                fastavro.schemaless_writer(bytes_io, self.avro_schema, data)
-            return bytes_io.getvalue()
+            with io.BytesIO() as bytes_io:
+                if self.include_schema:
+                    fastavro.writer(
+                        bytes_io,
+                        schema=self.avro_schema,
+                        records=[data],
+                        sync_marker=self.sync_marker,
+                    )
+                else:
+                    fastavro.schemaless_writer(bytes_io, self.avro_schema, data)
+                return bytes_io.getvalue()
 
         def deserialize(self, data: bytes) -> Any:
-            bytes_io = io.BytesIO(data)
-            if self.seek_offset is not None:
-                bytes_io.seek(self.seek_offset)
-            if self.avro_schema:
-                return fastavro.schemaless_reader(bytes_io, self.avro_schema)
-            return list(fastavro.reader(bytes_io))[0]
+            with io.BytesIO(data) as bytes_io:
+                if self.seek_offset is not None:
+                    bytes_io.seek(self.seek_offset)
+                if self.avro_schema:
+                    return fastavro.schemaless_reader(bytes_io, self.avro_schema)
+                return list(fastavro.reader(bytes_io))[0]
 
         @staticmethod
         def extra_annotations_keys() -> list[str]:
@@ -107,7 +114,7 @@ if has_fastavro:
 
     Avro = Annotated[T, AvroSerializer, MESSAGE_SERIALIZER_FLAG]
 
-if has_protobuf:
+if has_protobuf:  # pragma: no cover
 
     class ProtobufSerializer(Serializer):
         def __init__(self, protobuf_schema: type[Any], **kwargs: Any) -> None:
@@ -125,7 +132,7 @@ if has_protobuf:
             return json_format.MessageToDict(entity)
 
         @staticmethod
-        def extra_annotations_keys() -> list[str]:
+        def required_extra_annotations_keys() -> list[str]:
             return ["protobuf_schema"]
 
     Protobuf = Annotated[T, ProtobufSerializer, MESSAGE_SERIALIZER_FLAG]

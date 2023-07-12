@@ -38,6 +38,9 @@ jobs:
       - name: mypy
         run: make mypy
 
+      - name: Start Kafka and Zookeeper
+        run: make start-kafka
+
       - name: Test
         run: make test
         env:
@@ -49,6 +52,10 @@ jobs:
         with:
           name: coverage
           path: coverage
+
+      - name: Stop Kafka and Zookeeper
+        run: make stop-kafka
+        if: always()
 
   coverage-combine:
     needs: [test]
