@@ -31,6 +31,7 @@ from kaflow import parameters
 from kaflow._consumer import TopicConsumerFunc
 from kaflow._utils.asyncio import asyncify
 from kaflow._utils.inspect import is_not_coroutine_function
+from kaflow._utils.overrides import DependencyOverrideManager
 from kaflow.dependencies import Scopes
 from kaflow.exceptions import KaflowDeserializationException
 from kaflow.message import Message
@@ -197,6 +198,7 @@ class Kaflow:
         # di
         self._container = Container()
         self._container_state = ScopeState()
+        self.dependency_overrides = DependencyOverrideManager(self._container)
 
         self._loop = asyncio.get_event_loop()
         self._consumer: AIOKafkaConsumer | None = None
@@ -260,7 +262,7 @@ class Kaflow:
         topic_processor = TopicConsumerFunc(
             name=topic,
             container=self._container,
-            publish_fn=self._publish,
+            publish_fn=lambda *args, **kwargs: self._publish(*args, **kwargs),
             exception_handlers=self._exception_handlers,
             deserialization_error_handler=self._deserialization_error_handler,
             func=func,
@@ -487,6 +489,9 @@ class Kaflow:
             headers=headers_,
         )
 
+    def _get_consumer(self, topic: str) -> TopicConsumerFunc:
+        return self._consumers[topic]
+
     async def _consuming_loop(self) -> None:
         if not self._consumer:
             raise RuntimeError(
@@ -495,7 +500,8 @@ class Kaflow:
                 " called yet."
             )
         async for record in self._consumer:
-            await self._consumers[record.topic].consume(record=record)
+            consumer = self._get_consumer(record.topic)
+            await consumer.consume(record=record)
 
     async def start(self) -> None:
         self._consumer = self._create_consumer()

@@ -1,31 +1,36 @@
 .DEFAULT_GOAL := all
 sources = kaflow tests
 
+.PHONY: .pdm
+.pdm:
+	@pdm -V || echo 'Please install PDM: https://pdm.fming.dev/latest/\#installation'
+
 .PHONY: install
-install: 
-	pip install -e .[dev,test]
+install: .pdm
+	pdm install
+	pre-commit install
 
 .PHONY: format
 format:
-	black --preview $(sources)
-	ruff --fix $(sources)
+	pdm run black $(sources)
+	pdm run ruff --fix $(sources)
 
 .PHONY: lint
 lint:
-	black --preview --check $(sources)
-	ruff $(sources)
+	pdm run black --check $(sources)
+	pdm run ruff $(sources)
 
 .PHONY: mypy
 mypy:
-	mypy kaflow
+	pdm run mypy kaflow
 
 .PHONY: test
 test:
-	coverage run -m pytest
+	pdm run coverage run -m pytest
 
-.PHONY: cov_html
-cov_html: test
-	coverage html
+.PHONY: cov-html
+cov-html: test
+	pdm run coverage html
 
 .PHONY: start-kafka
 start-kafka:

@@ -79,11 +79,13 @@ if has_fastavro:  # pragma: no cover
             avro_schema: dict[str, Any] | None = None,
             include_schema: bool = False,
             sync_marker: bytes = b"",
+            seek_offset: int | None = None,
             **kwargs: Any,
         ) -> None:
             self.avro_schema = avro_schema
             self.include_schema = include_schema
             self.sync_marker = sync_marker
+            self.seek_offset = seek_offset
 
         def serialize(self, data: Any) -> bytes:
             with io.BytesIO() as bytes_io:
@@ -100,9 +102,15 @@ if has_fastavro:  # pragma: no cover
 
         def deserialize(self, data: bytes) -> Any:
             with io.BytesIO(data) as bytes_io:
+                if self.seek_offset is not None:
+                    bytes_io.seek(self.seek_offset)
                 if self.avro_schema:
                     return fastavro.schemaless_reader(bytes_io, self.avro_schema)
                 return list(fastavro.reader(bytes_io))[0]
+
+        @staticmethod
+        def extra_annotations_keys() -> list[str]:
+            return ["avro_schema"]
 
     Avro = Annotated[T, AvroSerializer, MESSAGE_SERIALIZER_FLAG]
 
